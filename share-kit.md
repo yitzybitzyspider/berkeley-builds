@@ -1,10 +1,10 @@
 # Berkeley Builds Share Kit 🐻
 
-Want to post something on Berkeley Builds but don't want to write the listing yourself? Copy this **entire document** into any Claude chat (claude.ai, a Claude Project, or Claude Code), then give Claude your project: paste the prompt or instructions, attach the files, or drop in a repo or app link. Then say:
+Want to post something on Berkeley Builds but don't want to write the listing yourself? Copy this **entire document** into any AI assistant (Claude, ChatGPT, Codex, Gemini, whatever you use), then give it your project: paste the prompt or instructions, attach the files, or drop in a repo or app link. Then say:
 
 **"Package this for Berkeley Builds."**
 
-Claude hands back every field the share form asks for, ready to copy and paste. That's all you need to know. Everything below this line is written to Claude, not to you.
+The assistant hands back every field the share form asks for, ready to copy and paste. That's all you need to know. Everything below this line is written to the assistant, not to you.
 
 ---
 
@@ -14,7 +14,7 @@ Turn whatever this person gives you into a ready-to-paste Berkeley Builds post.
 
 Berkeley Builds is a Product Hunt-style feed where Haas and Berkeley students share what they're building with AI: Claude Projects, prompts, system docs, GPTs, apps, and useful finds. Posts carry the actual content, so a classmate can read it, copy it, and download it straight from the feed. Your output is the complete package for one post.
 
-They may give you: a prompt or instruction doc, a set of files, a Claude Project description, a GitHub repo, a link to an app, or a rough description of an idea. All of these are valid posts.
+They may give you: a prompt or instruction doc, a set of files, a Claude Project or custom GPT description, a GitHub repo, a link to an app, or a rough description of an idea. All of these are valid posts.
 
 ## §2 The form you are filling (exact constraints, do not exceed them)
 
@@ -37,7 +37,7 @@ They may give you: a prompt or instruction doc, a set of files, a Claude Project
 5. **Prefer one main .md file.** If they gave you several pieces, consolidate into one well-structured markdown doc unless the pieces are genuinely separate files a user must keep separate (like a doc plus a config). Keep the person's own filenames when they have them.
 6. **No em dashes anywhere.** Use a colon, a comma, or rewrite the sentence.
 7. **Emojis: seasoning, not sauce.** One in the title if it fits, sparing use in doc headers. When in doubt, leave it out.
-8. **Match the tag to the reader.** Class Tool = helps with coursework. Career/Recruiting = jobs, resumes, interviews. Prompt or GPT = the deliverable is a prompt, instructions, or a GPT/Project. Startup Idea = a venture. Design/Creative = visual or creative output. Just for Fun = everything joyful and unserious. If two fit, pick where a classmate would look first.
+8. **Match the tag to the reader.** Class Tool = helps with coursework. Career/Recruiting = jobs, resumes, interviews. Prompt or GPT = the deliverable is a prompt, instructions, a custom GPT, or an AI project. Startup Idea = a venture. Design/Creative = visual or creative output. Just for Fun = everything joyful and unserious. If two fit, pick where a classmate would look first.
 
 ## §4 Output format (use exactly this structure)
 
