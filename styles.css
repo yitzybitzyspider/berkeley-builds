@@ -243,3 +243,13 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
   border-radius: 999px; padding: .15rem .6rem; font-weight: 700;
 }
 .card-problem { border-left: 4px solid #f0a35e; }
+
+/* ---------- remix (v0.3.1) ---------- */
+.remix-badge {
+  background: #eef9f1; border: 1px solid #a7d9b4; color: #166534;
+  border-radius: 999px; padding: .15rem .6rem; font-weight: 600;
+}
+.remix-note {
+  background: #eef9f1; border: 1px solid #a7d9b4; border-radius: 10px;
+  padding: .6rem .8rem; font-size: .85rem; margin-bottom: 1rem;
+}

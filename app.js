@@ -19,6 +19,7 @@ const state = {
   commentCache: {},     // postId -> comments[]
   fileCache: {},        // postId -> files[] (with content)
   pendingFiles: [],     // files staged in the share modal
+  remixOf: null,        // post being remixed, while the share modal is open
   loginError: null,
 };
 
@@ -82,7 +83,7 @@ function downloadText(filename, content) {
 async function loadFeed() {
   const { data, error } = await supabase
     .from('posts')
-    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id), post_files(id, filename)')
+    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id), post_files(id, filename), remix_source:posts!posts_remix_of_fkey(id, title)')
     .order('created_at', { ascending: false });
   if (error) { console.error('loadFeed', error); return; }
   state.posts = data ?? [];
@@ -133,6 +134,7 @@ async function submitPost(fields) {
     kind: fields.kind,
     looking_for_collab: fields.collab,
     contact: fields.collab ? (fields.contact || null) : null,
+    remix_of: state.remixOf,
   }).select().single();
   if (error) return error.message;
   if (state.pendingFiles.length) {
@@ -143,6 +145,7 @@ async function submitPost(fields) {
     if (fileErr) return 'Post created, but attaching content failed: ' + fileErr.message;
   }
   state.pendingFiles = [];
+  state.remixOf = null;
   await loadFeed();
   return null;
 }
@@ -230,6 +233,7 @@ function postCard(p) {
         <span class="tag-pill">${esc(p.tag)}</span>
         ${p.kind === 'find' ? `<span class="find-badge">🔎 Shared find</span>` : ''}
         ${p.kind === 'problem' ? `<span class="problem-badge">🙋 Problem to solve</span>` : ''}
+        ${p.remix_source ? `<span class="remix-badge" title="Built on top of another post">🔁 remix of “${esc(p.remix_source.title)}”</span>` : ''}
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
           ${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
@@ -238,6 +242,7 @@ function postCard(p) {
         <span>·</span><span>${timeAgo(p.created_at)}</span>
         <span>·</span>
         <button class="linkish" data-act="comments">${open ? 'Hide' : ''} ${p.comments.length} comment${p.comments.length === 1 ? '' : 's'}</button>
+        <span>·</span><button class="linkish" data-act="remix" title="Start your own version from this post">🔁 remix</button>
         ${mine ? `<span>·</span><button class="linkish danger" data-act="delete">delete</button>` : ''}
       </div>
       ${open ? `
@@ -312,6 +317,7 @@ function feedView() {
       else { state.openComments.add(post.id); loadComments(post.id); }
       render();
     };
+    card.querySelector('[data-act="remix"]').onclick = () => openPostModal(post);
     card.querySelector('[data-act="delete"]')?.addEventListener('click', () => deletePost(post.id));
     card.querySelectorAll('[data-act="del-comment"]').forEach(b =>
       b.onclick = () => deleteComment(b.dataset.cid, post.id));
@@ -429,13 +435,15 @@ function stageFile(filename, content, errBox) {
   renderPendingFiles();
 }
 
-function openPostModal() {
+async function openPostModal(remixSource = null) {
   state.pendingFiles = [];
+  state.remixOf = remixSource?.id ?? null;
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal">
-        <h2>Share a build</h2>
+        <h2>${remixSource ? 'Remix this build' : 'Share a build'}</h2>
+        ${remixSource ? `<div class="remix-note">🔁 Starting from <b>${esc(remixSource.title)}</b>. Its content is preloaded below: change what you want, credit stays automatic.</div>` : ''}
         <div class="kit-box">
           <div class="kit-title">⚡ The fast way</div>
           <div class="hint">Paste the <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> (<button type="button" class="linkish" id="copy-kit">copy it</button>) into Claude or ChatGPT with your project, then paste its entire reply here. The form fills itself.</div>
@@ -503,8 +511,8 @@ function openPostModal() {
     </div>`;
   const overlay = document.getElementById('overlay');
   const errBox = document.getElementById('form-error');
-  overlay.onclick = e => { if (e.target === overlay) root.innerHTML = ''; };
-  document.getElementById('cancel-btn').onclick = () => { root.innerHTML = ''; };
+  overlay.onclick = e => { if (e.target === overlay) { root.innerHTML = ''; state.remixOf = null; } };
+  document.getElementById('cancel-btn').onclick = () => { root.innerHTML = ''; state.remixOf = null; };
   document.getElementById('collab-check').onchange = e => {
     document.getElementById('contact-field').style.display = e.target.checked ? '' : 'none';
   };
@@ -562,9 +570,21 @@ function openPostModal() {
     document.getElementById('paste-name').value = '';
     document.getElementById('paste-body').value = '';
   };
+  if (remixSource) {
+    const f = document.getElementById('post-form');
+    f.title.value = `${remixSource.title} (remix)`.slice(0, 100);
+    f.tagline.value = remixSource.tagline;
+    f.tag.value = remixSource.tag;
+    const srcFiles = await loadFiles(remixSource.id);
+    srcFiles.forEach(fl => stageFile(fl.filename, fl.content, errBox));
+  }
   document.getElementById('post-form').onsubmit = async e => {
     e.preventDefault();
     const f = e.target;
+    const submitBtn = f.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Posting…';
     const err = await submitPost({
       title: f.title.value.trim(),
       tagline: f.tagline.value.trim(),
@@ -574,8 +594,13 @@ function openPostModal() {
       collab: f.collab.checked,
       contact: f.contact.value.trim(),
     });
-    if (err) errBox.textContent = err;
-    else root.innerHTML = '';
+    if (err) {
+      errBox.textContent = err;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Post it';
+    } else {
+      root.innerHTML = '';
+    }
   };
 }
 
