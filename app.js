@@ -14,6 +14,7 @@ const state = {
   sort: 'new',          // 'new' | 'top'
   tag: null,            // null = all
   collabOnly: false,
+  problemsOnly: false,
   openComments: new Set(),
   commentCache: {},     // postId -> comments[]
   fileCache: {},        // postId -> files[] (with content)
@@ -196,6 +197,7 @@ function visiblePosts() {
   let posts = [...state.posts];
   if (state.tag) posts = posts.filter(p => p.tag === state.tag);
   if (state.collabOnly) posts = posts.filter(p => p.looking_for_collab);
+  if (state.problemsOnly) posts = posts.filter(p => p.kind === 'problem');
   if (state.sort === 'top') {
     posts.sort((a, b) => b.votes.length - a.votes.length || new Date(b.created_at) - new Date(a.created_at));
   }
@@ -211,8 +213,8 @@ function postCard(p) {
   const author = p.profiles ?? {};
   const files = p.post_files ?? [];
   return `
-  <div class="card" data-id="${p.id}">
-    <button class="vote ${voted ? 'voted' : ''}" data-act="vote" title="${voted ? 'Remove upvote' : 'Upvote'}">
+  <div class="card ${p.kind === 'problem' ? 'card-problem' : ''}" data-id="${p.id}">
+    <button class="vote ${voted ? 'voted' : ''}" data-act="vote" title="${p.kind === 'problem' ? (voted ? 'Remove me too' : 'Me too, I want this solved') : (voted ? 'Remove upvote' : 'Upvote')}">
       <span class="tri">▲</span><span class="count">${p.votes.length}</span>
     </button>
     <div class="card-body">
@@ -227,6 +229,7 @@ function postCard(p) {
       <div class="card-meta">
         <span class="tag-pill">${esc(p.tag)}</span>
         ${p.kind === 'find' ? `<span class="find-badge">🔎 Shared find</span>` : ''}
+        ${p.kind === 'problem' ? `<span class="problem-badge">🙋 Problem to solve</span>` : ''}
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
           ${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
@@ -279,6 +282,7 @@ function feedView() {
         </div>
         ${TAGS.map(t => `<button class="chip ${state.tag === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
         <button class="chip ${state.collabOnly ? 'active' : ''}" id="collab-filter">🤝 Wants collaborators</button>
+        <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>
       </div>
       <div id="feed">
         ${posts.length ? posts.map(postCard).join('')
@@ -291,6 +295,7 @@ function feedView() {
   document.getElementById('new-post-btn').onclick = openPostModal;
   document.getElementById('signout-btn').onclick = async () => { await supabase.auth.signOut(); };
   document.getElementById('collab-filter').onclick = () => { state.collabOnly = !state.collabOnly; render(); };
+  document.getElementById('problem-filter').onclick = () => { state.problemsOnly = !state.problemsOnly; render(); };
   app.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => { state.sort = b.dataset.sort; render(); });
   app.querySelectorAll('[data-tag]').forEach(b => b.onclick = () => {
     state.tag = state.tag === b.dataset.tag ? null : b.dataset.tag; render();
@@ -364,6 +369,40 @@ async function openContentModal(post) {
   });
 }
 
+
+/* ---------------- share-kit parser ---------------- */
+
+function parseShareKit(text) {
+  const out = { fields: {}, files: [] };
+  const grab = label => {
+    const m = text.match(new RegExp('^[ \\t>*_-]*(?:\\*\\*|__)?' + label + '(?:\\*\\*|__)?[ \\t]*:[ \\t]*(.+)$', 'im'));
+    return m ? m[1].trim().replace(/^(?:\*\*|__)|(?:\*\*|__)$/g, '').trim() : '';
+  };
+  out.fields.title = grab('Title');
+  out.fields.tagline = grab('Pitch') || grab('Tagline');
+  let link = grab('Link');
+  if (/leave blank|^none$|^n\/a$|^-$/i.test(link)) link = '';
+  out.fields.link = /^https?:\/\//i.test(link) ? link : '';
+  const whose = grab('Whose') || grab('Kind');
+  out.fields.kind = /problem|solve|need|ask/i.test(whose) ? 'problem' : (/find|else/i.test(whose) ? 'find' : 'original');
+  const tagRaw = grab('Tag');
+  out.fields.tag = TAGS.find(t => t.toLowerCase() === tagRaw.toLowerCase())
+    || (tagRaw && TAGS.find(t => t.toLowerCase().includes(tagRaw.toLowerCase())))
+    || (tagRaw && TAGS.find(t => tagRaw.toLowerCase().includes(t.toLowerCase())))
+    || '';
+  const collab = grab('Collab') || grab('Collaborators');
+  out.fields.collab = /^y/i.test(collab);
+  const cm = collab.match(/contact[ \t]*:[ \t]*(.+)/i);
+  out.fields.contact = cm ? cm[1].trim() : '';
+  // Files: a filename line (optionally bold or a heading), then a fenced block.
+  const fileRx = /(?:^|\n)[ \t]*(?:#{1,4}[ \t]*)?(?:\*\*|__)?(?:File[ \t]*:[ \t]*)?([\w][\w .()-]{0,110}\.[A-Za-z0-9]{1,8})(?:\*\*|__)?[ \t]*\n+(`{3,4})[^\n]*\n([\s\S]*?)\n\2(?=\s|$)/g;
+  let m;
+  while ((m = fileRx.exec(text))) {
+    out.files.push({ filename: m[1].trim(), content: m[3] });
+  }
+  return out;
+}
+
 /* ---------------- share modal ---------------- */
 
 function renderPendingFiles() {
@@ -397,6 +436,15 @@ function openPostModal() {
     <div class="modal-overlay" id="overlay">
       <div class="modal">
         <h2>Share a build</h2>
+        <div class="kit-box">
+          <div class="kit-title">⚡ The fast way</div>
+          <div class="hint">Paste the <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> (<button type="button" class="linkish" id="copy-kit">copy it</button>) into Claude or ChatGPT with your project, then paste its entire reply here. The form fills itself.</div>
+          <textarea id="kit-paste" rows="4" placeholder="Paste your assistant's whole reply here…"></textarea>
+          <div class="kit-actions">
+            <button type="button" class="btn-primary btn-sm" id="kit-fill">Fill the form</button>
+            <span class="kit-status" id="kit-status"></span>
+          </div>
+        </div>
         <form id="post-form">
           <div class="field">
             <label>Title</label>
@@ -413,7 +461,7 @@ function openPostModal() {
           </div>
           <div class="field">
             <label>Content (optional, this is the good part)</label>
-            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Classmates can read, copy, and download it right in the feed. Lazy? Paste the <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> into Claude or ChatGPT and it packages all of this for you.</div>
+            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Upload, drag files anywhere onto this window, or paste below. Classmates read, copy, and download it right in the feed.</div>
             <input type="file" id="file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
             <div id="pending-files" class="pending-wrap"></div>
             <details class="paste-details">
@@ -428,6 +476,7 @@ function openPostModal() {
             <div class="radio-row">
               <label class="radio-opt"><input type="radio" name="kind" value="original" checked> My build</label>
               <label class="radio-opt"><input type="radio" name="kind" value="find"> Someone else's find (a repo, app, or doc worth sharing)</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="problem"> 🙋 A problem I want solved (no build yet, just the need)</label>
             </div>
           </div>
           <div class="field">
@@ -459,6 +508,45 @@ function openPostModal() {
   document.getElementById('collab-check').onchange = e => {
     document.getElementById('contact-field').style.display = e.target.checked ? '' : 'none';
   };
+  document.getElementById('copy-kit').onclick = async e => {
+    const btn = e.target;
+    const kit = await fetch('share-kit.md').then(r => r.text());
+    await navigator.clipboard.writeText(kit);
+    btn.textContent = 'copied!';
+    setTimeout(() => { btn.textContent = 'copy it'; }, 1500);
+  };
+  document.getElementById('kit-fill').onclick = () => {
+    const raw = document.getElementById('kit-paste').value;
+    const status = document.getElementById('kit-status');
+    if (!raw.trim()) { status.textContent = 'Paste your assistant’s reply first.'; return; }
+    const { fields, files } = parseShareKit(raw);
+    const f = document.getElementById('post-form');
+    if (fields.title) f.title.value = fields.title.slice(0, 100);
+    if (fields.tagline) f.tagline.value = fields.tagline.slice(0, 240);
+    if (fields.link) f.link.value = fields.link;
+    if (fields.tag) f.tag.value = fields.tag;
+    f.kind.value = fields.kind;
+    f.collab.checked = fields.collab;
+    document.getElementById('contact-field').style.display = fields.collab ? '' : 'none';
+    if (fields.contact) f.contact.value = fields.contact.slice(0, 120);
+    files.forEach(fl => stageFile(fl.filename, fl.content, errBox));
+    const got = [fields.title && 'title', fields.tagline && 'pitch', fields.link && 'link', fields.tag && 'tag'].filter(Boolean);
+    if (!got.length && !files.length) {
+      status.textContent = 'Couldn’t read that. Fill the form below instead.';
+    } else {
+      status.textContent = `Filled ${got.join(', ')}${files.length ? ` · staged ${files.length} file${files.length > 1 ? 's' : ''}` : ''}. Review, then Post it.`;
+    }
+  };
+  const modalEl = root.querySelector('.modal');
+  modalEl.addEventListener('dragover', e => { e.preventDefault(); modalEl.classList.add('dragging'); });
+  modalEl.addEventListener('dragleave', () => modalEl.classList.remove('dragging'));
+  modalEl.addEventListener('drop', async e => {
+    e.preventDefault(); modalEl.classList.remove('dragging');
+    for (const file of e.dataTransfer.files) {
+      const text = await file.text();
+      stageFile(file.name, text, errBox);
+    }
+  });
   document.getElementById('file-input').onchange = async e => {
     for (const file of e.target.files) {
       const text = await file.text();
@@ -504,7 +592,9 @@ supabase.auth.onAuthStateChange((_event, session) => {
   const hadSession = !!state.session;
   state.session = session;
   if (session && !hadSession) { state.loginError = null; loadFeed(); }
-  else render();
+  else if (!session && hadSession) render();
+  // Token refreshes and tab-refocus events change nothing visible: leave the
+  // DOM alone so open modals and half-typed forms survive.
 });
 
 const { data: { session } } = await supabase.auth.getSession();
