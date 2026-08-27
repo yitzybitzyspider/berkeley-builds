@@ -83,10 +83,18 @@ function downloadText(filename, content) {
 async function loadFeed() {
   const { data, error } = await supabase
     .from('posts')
-    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id), post_files(id, filename), remix_source:posts!posts_remix_of_fkey(id, title)')
+    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id), post_files(id, filename)')
     .order('created_at', { ascending: false });
   if (error) { console.error('loadFeed', error); return; }
   state.posts = data ?? [];
+  // Resolve remix sources with a plain second query (no PostgREST embed:
+  // self-join embeds depend on the schema cache, which can lag migrations).
+  const remixIds = [...new Set(state.posts.map(p => p.remix_of).filter(Boolean))];
+  if (remixIds.length) {
+    const { data: srcs } = await supabase.from('posts').select('id, title').in('id', remixIds);
+    const byId = Object.fromEntries((srcs ?? []).map(s => [s.id, s]));
+    state.posts.forEach(p => { p.remix_source = p.remix_of ? (byId[p.remix_of] ?? null) : null; });
+  }
   render();
 }
 
