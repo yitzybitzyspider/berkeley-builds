@@ -58,7 +58,7 @@ function captureAuthErrorFromUrl() {
 async function loadFeed() {
   const { data, error } = await supabase
     .from('posts')
-    .select('*, profiles(name, avatar_url), votes(user_id), comments(id)')
+    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id)')
     .order('created_at', { ascending: false });
   if (error) { console.error('loadFeed', error); return; }
   state.posts = data ?? [];
@@ -68,7 +68,7 @@ async function loadFeed() {
 async function loadComments(postId) {
   const { data, error } = await supabase
     .from('comments')
-    .select('*, profiles(name, avatar_url)')
+    .select('*, profiles:profiles!comments_author_fkey(name, avatar_url)')
     .eq('post_id', postId)
     .order('created_at', { ascending: true });
   if (error) { console.error('loadComments', error); return; }
