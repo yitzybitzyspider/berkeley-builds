@@ -284,7 +284,7 @@ function feedView() {
         ${posts.length ? posts.map(postCard).join('')
           : `<div class="empty">Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.</div>`}
       </div>
-      <footer>Berkeley Builds v${APP_VERSION} · built by Haas students, for Haas students</footer>
+      <footer>Berkeley Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit for Claude</a></footer>
     </main>
     <div id="modal-root"></div>`;
 
@@ -413,7 +413,7 @@ function openPostModal() {
           </div>
           <div class="field">
             <label>Content (optional, this is the good part)</label>
-            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Classmates can read, copy, and download it right in the feed.</div>
+            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Classmates can read, copy, and download it right in the feed. Lazy? Paste the <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> into Claude and it packages all of this for you.</div>
             <input type="file" id="file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
             <div id="pending-files" class="pending-wrap"></div>
             <details class="paste-details">
