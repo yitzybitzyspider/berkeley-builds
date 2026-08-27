@@ -1,8 +1,11 @@
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+import { marked } from 'https://cdn.jsdelivr.net/npm/marked@12/+esm';
+import DOMPurify from 'https://cdn.jsdelivr.net/npm/dompurify@3/+esm';
 import { SUPABASE_URL, SUPABASE_KEY, APP_VERSION } from './config.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const TAGS = ['Class Tool', 'Career/Recruiting', 'Prompt or GPT', 'Startup Idea', 'Design/Creative', 'Just for Fun'];
+const MAX_FILE_CHARS = 300000;
 const app = document.getElementById('app');
 
 const state = {
@@ -13,6 +16,8 @@ const state = {
   collabOnly: false,
   openComments: new Set(),
   commentCache: {},     // postId -> comments[]
+  fileCache: {},        // postId -> files[] (with content)
+  pendingFiles: [],     // files staged in the share modal
   loginError: null,
 };
 
@@ -41,7 +46,6 @@ function friendlyAuthError(desc) {
   return desc;
 }
 
-// Supabase returns auth errors in the URL hash or query string after a redirect
 function captureAuthErrorFromUrl() {
   for (const raw of [location.hash.slice(1), location.search.slice(1)]) {
     const p = new URLSearchParams(raw);
@@ -53,12 +57,31 @@ function captureAuthErrorFromUrl() {
   }
 }
 
+// Markdown files render as sanitized HTML; everything else as preformatted text.
+function renderDoc(filename, content) {
+  if (/\.(md|markdown)$/i.test(filename) || !/\.[a-z0-9]+$/i.test(filename)) {
+    try {
+      return `<div class="md-body">${DOMPurify.sanitize(marked.parse(content))}</div>`;
+    } catch (e) { /* fall through to pre */ }
+  }
+  return `<pre class="doc-pre">${esc(content)}</pre>`;
+}
+
+function downloadText(filename, content) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /* ---------------- data ---------------- */
 
 async function loadFeed() {
   const { data, error } = await supabase
     .from('posts')
-    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id)')
+    .select('*, profiles:profiles!posts_author_fkey(name, avatar_url), votes(user_id), comments(id), post_files(id, filename)')
     .order('created_at', { ascending: false });
   if (error) { console.error('loadFeed', error); return; }
   state.posts = data ?? [];
@@ -76,6 +99,18 @@ async function loadComments(postId) {
   render();
 }
 
+async function loadFiles(postId) {
+  if (state.fileCache[postId]) return state.fileCache[postId];
+  const { data, error } = await supabase
+    .from('post_files')
+    .select('*')
+    .eq('post_id', postId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('loadFiles', error); return []; }
+  state.fileCache[postId] = data ?? [];
+  return state.fileCache[postId];
+}
+
 async function toggleVote(post) {
   const me = state.session.user.id;
   const voted = post.votes.some(v => v.user_id === me);
@@ -88,16 +123,25 @@ async function toggleVote(post) {
 }
 
 async function submitPost(fields) {
-  const { error } = await supabase.from('posts').insert({
+  const { data, error } = await supabase.from('posts').insert({
     author: state.session.user.id,
     title: fields.title,
     tagline: fields.tagline,
     link: fields.link || null,
     tag: fields.tag,
+    kind: fields.kind,
     looking_for_collab: fields.collab,
     contact: fields.collab ? (fields.contact || null) : null,
-  });
+  }).select().single();
   if (error) return error.message;
+  if (state.pendingFiles.length) {
+    const rows = state.pendingFiles.map(f => ({
+      post_id: data.id, filename: f.filename, content: f.content,
+    }));
+    const { error: fileErr } = await supabase.from('post_files').insert(rows);
+    if (fileErr) return 'Post created, but attaching content failed: ' + fileErr.message;
+  }
+  state.pendingFiles = [];
   await loadFeed();
   return null;
 }
@@ -105,6 +149,7 @@ async function submitPost(fields) {
 async function deletePost(id) {
   if (!confirm('Delete this post? This can’t be undone.')) return;
   await supabase.from('posts').delete().eq('id', id);
+  delete state.fileCache[id];
   await loadFeed();
 }
 
@@ -164,6 +209,7 @@ function postCard(p) {
   const open = state.openComments.has(p.id);
   const comments = state.commentCache[p.id] ?? [];
   const author = p.profiles ?? {};
+  const files = p.post_files ?? [];
   return `
   <div class="card" data-id="${p.id}">
     <button class="vote ${voted ? 'voted' : ''}" data-act="vote" title="${voted ? 'Remove upvote' : 'Upvote'}">
@@ -174,8 +220,13 @@ function postCard(p) {
         ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.title)} ↗</a>`
         : esc(p.title)}</div>
       <div class="card-tagline">${esc(p.tagline)}</div>
+      ${files.length ? `
+      <div class="file-row">
+        ${files.map(f => `<button class="file-chip" data-act="open-files" title="View content">📄 ${esc(f.filename)}</button>`).join('')}
+      </div>` : ''}
       <div class="card-meta">
         <span class="tag-pill">${esc(p.tag)}</span>
+        ${p.kind === 'find' ? `<span class="find-badge">🔎 Shared find</span>` : ''}
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
           ${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
@@ -249,6 +300,8 @@ function feedView() {
     const post = state.posts.find(p => p.id === card.dataset.id);
     if (!post) return;
     card.querySelector('[data-act="vote"]').onclick = () => toggleVote(post);
+    card.querySelectorAll('[data-act="open-files"]').forEach(b =>
+      b.onclick = () => openContentModal(post));
     card.querySelector('[data-act="comments"]').onclick = () => {
       if (state.openComments.has(post.id)) state.openComments.delete(post.id);
       else { state.openComments.add(post.id); loadComments(post.id); }
@@ -266,7 +319,79 @@ function feedView() {
   });
 }
 
+/* ---------------- content viewer ---------------- */
+
+async function openContentModal(post) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal modal-wide"><div class="doc-loading">Loading content…</div></div>
+    </div>`;
+  document.getElementById('overlay').onclick = e => { if (e.target.id === 'overlay') root.innerHTML = ''; };
+
+  const files = await loadFiles(post.id);
+  const modal = root.querySelector('.modal');
+  if (!modal) return;
+  modal.innerHTML = `
+    <div class="doc-header">
+      <div>
+        <h2>${esc(post.title)}</h2>
+        <div class="doc-sub">${esc(post.tagline)}</div>
+      </div>
+      <button class="btn-secondary" id="doc-close">Close</button>
+    </div>
+    ${files.length ? files.map((f, i) => `
+      <div class="doc-file">
+        <div class="doc-file-bar">
+          <span class="doc-filename">📄 ${esc(f.filename)}</span>
+          <span class="doc-actions">
+            <button class="btn-secondary btn-sm" data-copy="${i}">Copy</button>
+            <button class="btn-secondary btn-sm" data-dl="${i}">Download</button>
+          </span>
+        </div>
+        ${renderDoc(f.filename, f.content)}
+      </div>`).join('')
+      : `<div class="empty">No content attached.</div>`}`;
+  document.getElementById('doc-close').onclick = () => { root.innerHTML = ''; };
+  modal.querySelectorAll('[data-copy]').forEach(b => b.onclick = async () => {
+    await navigator.clipboard.writeText(files[+b.dataset.copy].content);
+    b.textContent = 'Copied!';
+    setTimeout(() => { b.textContent = 'Copy'; }, 1500);
+  });
+  modal.querySelectorAll('[data-dl]').forEach(b => b.onclick = () => {
+    const f = files[+b.dataset.dl];
+    downloadText(f.filename, f.content);
+  });
+}
+
+/* ---------------- share modal ---------------- */
+
+function renderPendingFiles() {
+  const box = document.getElementById('pending-files');
+  if (!box) return;
+  box.innerHTML = state.pendingFiles.map((f, i) => `
+    <span class="pending-chip">📄 ${esc(f.filename)} <span class="pending-size">(${Math.ceil(f.content.length / 1000)}k)</span>
+      <button type="button" class="pending-x" data-rm="${i}" title="Remove">✕</button>
+    </span>`).join('');
+  box.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => {
+    state.pendingFiles.splice(+b.dataset.rm, 1);
+    renderPendingFiles();
+  });
+}
+
+function stageFile(filename, content, errBox) {
+  if (!content.trim()) return;
+  if (content.length > MAX_FILE_CHARS) {
+    errBox.textContent = `${filename} is too big (${content.length} chars, max ${MAX_FILE_CHARS}). Text files only.`;
+    return;
+  }
+  state.pendingFiles.push({ filename, content });
+  errBox.textContent = '';
+  renderPendingFiles();
+}
+
 function openPostModal() {
+  state.pendingFiles = [];
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
@@ -275,7 +400,7 @@ function openPostModal() {
         <form id="post-form">
           <div class="field">
             <label>Title</label>
-            <input type="text" name="title" maxlength="100" required placeholder="e.g. Case Interview Coach GPT">
+            <input type="text" name="title" maxlength="100" required placeholder="e.g. The Resume System">
           </div>
           <div class="field">
             <label>One-line pitch</label>
@@ -284,7 +409,26 @@ function openPostModal() {
           <div class="field">
             <label>Link (optional)</label>
             <input type="url" name="link" placeholder="https://…">
-            <div class="hint">Demo, GPT link, repo, deck, anything. Ideas with no link are welcome too.</div>
+            <div class="hint">Demo, GPT link, repo, deck. Ideas with no link are welcome too.</div>
+          </div>
+          <div class="field">
+            <label>Content (optional, this is the good part)</label>
+            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Classmates can read, copy, and download it right in the feed.</div>
+            <input type="file" id="file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
+            <div id="pending-files" class="pending-wrap"></div>
+            <details class="paste-details">
+              <summary>Or paste content directly</summary>
+              <input type="text" id="paste-name" placeholder="Name it, e.g. system-prompt.md" maxlength="120" style="margin:.4rem 0">
+              <textarea id="paste-body" rows="6" placeholder="Paste your prompt, instructions, or doc here…"></textarea>
+              <button type="button" class="btn-secondary btn-sm" id="paste-add" style="margin-top:.4rem">Add to post</button>
+            </details>
+          </div>
+          <div class="field">
+            <label>Whose is it?</label>
+            <div class="radio-row">
+              <label class="radio-opt"><input type="radio" name="kind" value="original" checked> My build</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="find"> Someone else's find (a repo, app, or doc worth sharing)</label>
+            </div>
           </div>
           <div class="field">
             <label>Tag</label>
@@ -309,10 +453,26 @@ function openPostModal() {
       </div>
     </div>`;
   const overlay = document.getElementById('overlay');
+  const errBox = document.getElementById('form-error');
   overlay.onclick = e => { if (e.target === overlay) root.innerHTML = ''; };
   document.getElementById('cancel-btn').onclick = () => { root.innerHTML = ''; };
   document.getElementById('collab-check').onchange = e => {
     document.getElementById('contact-field').style.display = e.target.checked ? '' : 'none';
+  };
+  document.getElementById('file-input').onchange = async e => {
+    for (const file of e.target.files) {
+      const text = await file.text();
+      stageFile(file.name, text, errBox);
+    }
+    e.target.value = '';
+  };
+  document.getElementById('paste-add').onclick = () => {
+    const name = document.getElementById('paste-name').value.trim() || 'untitled.md';
+    const body = document.getElementById('paste-body').value;
+    if (!body.trim()) { errBox.textContent = 'Paste some content first.'; return; }
+    stageFile(name, body, errBox);
+    document.getElementById('paste-name').value = '';
+    document.getElementById('paste-body').value = '';
   };
   document.getElementById('post-form').onsubmit = async e => {
     e.preventDefault();
@@ -322,10 +482,11 @@ function openPostModal() {
       tagline: f.tagline.value.trim(),
       link: f.link.value.trim(),
       tag: f.tag.value,
+      kind: f.kind.value,
       collab: f.collab.checked,
       contact: f.contact.value.trim(),
     });
-    if (err) document.getElementById('form-error').textContent = err;
+    if (err) errBox.textContent = err;
     else root.innerHTML = '';
   };
 }
