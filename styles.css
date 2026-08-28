@@ -317,3 +317,22 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
   font: inherit; font-size: .85rem; margin-top: .4rem;
 }
 #edit-file-input { font-size: .8rem; margin-top: .3rem; }
+
+/* ---------- meetings banner (v0.6) ---------- */
+.meet-banner {
+  background: var(--blue); color: #fff; border-radius: var(--radius);
+  padding: .6rem .9rem; margin-bottom: .8rem; font-size: .85rem;
+  display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between;
+}
+.meet-banner a { color: var(--gold); }
+.meet-banner .linkish { color: rgba(255,255,255,.85); text-decoration: underline; font-size: .8rem; }
+.meet-banner .linkish:hover { color: #fff; }
+.meet-banner .linkish.danger { color: #fca5a5; }
+.meet-main { min-width: 0; }
+.meet-actions { display: flex; gap: .7rem; align-items: center; white-space: nowrap; }
+.meet-cal {
+  background: var(--gold); color: var(--blue-dark) !important; text-decoration: none;
+  border-radius: 7px; padding: .3rem .7rem; font-weight: 700; font-size: .8rem;
+}
+.meet-empty { background: #eef2f7; color: var(--muted); }
+.meet-empty .linkish { color: var(--blue); }

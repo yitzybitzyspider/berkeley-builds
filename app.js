@@ -20,6 +20,7 @@ const state = {
   fileCache: {},        // postId -> files[] (with content)
   pendingFiles: [],     // files staged in the share modal
   remixOf: null,        // post being remixed, while the share modal is open
+  events: [],           // upcoming meetings
   loginError: null,
 };
 
@@ -87,6 +88,7 @@ async function loadFeed() {
     .order('created_at', { ascending: false });
   if (error) { console.error('loadFeed', error); return; }
   state.posts = data ?? [];
+  await loadEvents();
   // Resolve remix sources with a plain second query (no PostgREST embed:
   // self-join embeds depend on the schema cache, which can lag migrations).
   const remixIds = [...new Set(state.posts.map(p => p.remix_of).filter(Boolean))];
@@ -113,6 +115,53 @@ async function loadFeed() {
     p.helpers = p.reactions.filter(r => r.type === 'help').map(r => helperNames[r.user_id] ?? 'Someone');
   });
   render();
+}
+
+async function loadEvents() {
+  const { data, error } = await supabase.from('events')
+    .select('*')
+    .gte('starts_at', new Date(Date.now() - 60 * 60 * 1000).toISOString())
+    .order('starts_at', { ascending: true })
+    .limit(5);
+  if (error) { console.error('loadEvents', error); return; }
+  state.events = data ?? [];
+  const hostIds = [...new Set(state.events.map(ev => ev.host))];
+  if (hostIds.length) {
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', hostIds);
+    const names = Object.fromEntries((profs ?? []).map(p => [p.id, p.name]));
+    state.events.forEach(ev => { ev.hostName = names[ev.host] ?? 'Someone'; });
+  }
+}
+
+async function addEvent(fields) {
+  const { error } = await supabase.from('events').insert({
+    host: state.session.user.id,
+    title: fields.title,
+    starts_at: fields.starts_at,
+    location: fields.location || null,
+  });
+  return error ? error.message : null;
+}
+
+async function deleteEvent(id) {
+  if (!confirm('Cancel this meeting?')) return;
+  await supabase.from('events').delete().eq('id', id);
+  await loadEvents();
+  render();
+}
+
+function gcalUrl(ev) {
+  const fmt = d => new Date(d).toISOString().replace(/[-:]|\.\d{3}/g, '');
+  const start = new Date(ev.starts_at);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const p = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: ev.title + ' (Berkeley Builds)',
+    dates: fmt(start) + '/' + fmt(end),
+    details: 'Hosted by ' + (ev.hostName ?? 'a classmate') + ' via Berkeley Builds',
+  });
+  if (ev.location) p.set('location', ev.location);
+  return 'https://calendar.google.com/calendar/render?' + p.toString();
 }
 
 async function loadComments(postId) {
@@ -386,6 +435,19 @@ function feedView() {
       </div>
     </header>
     <main>
+      ${(() => {
+        const ev = state.events[0];
+        if (!ev) return `<div class="meet-banner meet-empty">📅 No meeting on the books. <button class="linkish" id="host-meeting">Host one</button></div>`;
+        const when = new Date(ev.starts_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+        return `<div class="meet-banner">
+          <span class="meet-main">📅 Next meeting: <b>${esc(ev.title)}</b> · ${esc(when)}${ev.location ? ` · ${/^https?:\/\//i.test(ev.location) ? `<a href="${esc(ev.location)}" target="_blank" rel="noopener">join link</a>` : esc(ev.location)}` : ''} · hosted by ${esc(ev.hostName)}</span>
+          <span class="meet-actions">
+            <a class="meet-cal" href="${gcalUrl(ev)}" target="_blank" rel="noopener">Add to calendar</a>
+            <button class="linkish" id="host-meeting">host your own</button>
+            ${ev.host === state.session.user.id ? `<button class="linkish danger" data-del-event="${ev.id}">cancel</button>` : ''}
+          </span>
+        </div>`;
+      })()}
       <div class="hero">
         ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
         ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
@@ -408,6 +470,23 @@ function feedView() {
     <div id="modal-root"></div>`;
 
   document.getElementById('new-post-btn').onclick = () => openPostModal();
+  document.getElementById('host-meeting').onclick = openMeetingModal;
+  app.querySelectorAll('[data-del-event]').forEach(b => b.onclick = () => deleteEvent(b.dataset.delEvent));
+  const avatarEl = app.querySelector('.avatar');
+  if (avatarEl) {
+    avatarEl.title = 'Change the name classmates see';
+    avatarEl.style.cursor = 'pointer';
+    avatarEl.onclick = async () => {
+      const current = state.posts.find(p => p.author === u.id)?.profiles?.name
+        ?? meta.full_name ?? meta.name ?? '';
+      const name = prompt('Display name shown to classmates:', current);
+      if (name === null) return;
+      const trimmed = name.trim().slice(0, 80);
+      if (!trimmed) return;
+      await supabase.from('profiles').update({ name: trimmed }).eq('id', u.id);
+      await loadFeed();
+    };
+  }
   app.querySelectorAll('.quick-add').forEach(form => {
     form.onsubmit = async e => {
       e.preventDefault();
@@ -733,6 +812,60 @@ async function openPostModal(remixSource = null, preset = null) {
   };
 }
 
+
+
+/* ---------------- host a meeting ---------------- */
+
+function openMeetingModal() {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal">
+        <h2>Host a meeting</h2>
+        <form id="meeting-form">
+          <div class="field">
+            <input type="text" name="title" maxlength="100" required class="big-input" placeholder="e.g. Live coding session">
+          </div>
+          <div class="field">
+            <label>When</label>
+            <input type="datetime-local" name="when" required>
+          </div>
+          <div class="field">
+            <label>Where (optional)</label>
+            <input type="text" name="location" maxlength="200" placeholder="Room, or a Zoom/Meet link">
+          </div>
+          <div class="form-error" id="meeting-error"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="meeting-cancel">Cancel</button>
+            <button type="submit" class="btn-primary">Put it on the board</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  const overlay = document.getElementById('overlay');
+  overlay.onclick = e => { if (e.target === overlay) root.innerHTML = ''; };
+  document.getElementById('meeting-cancel').onclick = () => { root.innerHTML = ''; };
+  document.getElementById('meeting-form').onsubmit = async e => {
+    e.preventDefault();
+    const f = e.target;
+    const btn = f.querySelector('button[type="submit"]');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const err = await addEvent({
+      title: f.title.value.trim(),
+      starts_at: new Date(f.when.value).toISOString(),
+      location: f.location.value.trim(),
+    });
+    if (err) {
+      document.getElementById('meeting-error').textContent = err;
+      btn.disabled = false;
+    } else {
+      root.innerHTML = '';
+      await loadEvents();
+      render();
+    }
+  };
+}
 
 /* ---------------- add-details editor (own posts) ---------------- */
 
