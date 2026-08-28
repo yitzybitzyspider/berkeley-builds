@@ -296,3 +296,24 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
   font: inherit; font-size: .85rem; margin-top: .4rem;
 }
 #file-input { font-size: .8rem; }
+
+/* ---------- reactions + edit (v0.5) ---------- */
+.react-row { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; margin-top: .45rem; }
+.react-btn {
+  border: 1px solid var(--line); background: #fff; border-radius: 999px;
+  padding: .25rem .7rem; font-size: .78rem; font-weight: 600; color: var(--muted);
+}
+.react-btn:hover { border-color: var(--gold); color: var(--blue); }
+.react-btn.active { background: var(--gold-soft); border-color: var(--gold); color: var(--blue-dark); font-weight: 700; }
+.helpers { font-size: .76rem; color: #166534; font-weight: 600; }
+.hero-helpers { font-size: .72rem; color: #166534; font-weight: 700; white-space: nowrap; }
+.qa-attach {
+  background: #fff; border: 1px solid var(--line); border-radius: 8px;
+  padding: .45rem .55rem; font-size: .8rem;
+}
+.qa-attach:hover { border-color: var(--gold); }
+#edit-paste {
+  width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem;
+  font: inherit; font-size: .85rem; margin-top: .4rem;
+}
+#edit-file-input { font-size: .8rem; margin-top: .3rem; }

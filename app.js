@@ -95,6 +95,23 @@ async function loadFeed() {
     const byId = Object.fromEntries((srcs ?? []).map(s => [s.id, s]));
     state.posts.forEach(p => { p.remix_source = p.remix_of ? (byId[p.remix_of] ?? null) : null; });
   }
+  // Reactions ("I want this" / "I'll help") via plain queries, same cache reasoning.
+  const postIds = state.posts.map(p => p.id);
+  let reactions = [];
+  if (postIds.length) {
+    const { data: rx } = await supabase.from('reactions').select('post_id, user_id, type').in('post_id', postIds);
+    reactions = rx ?? [];
+  }
+  const helperIds = [...new Set(reactions.filter(r => r.type === 'help').map(r => r.user_id))];
+  const helperNames = {};
+  if (helperIds.length) {
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', helperIds);
+    (profs ?? []).forEach(pr => { helperNames[pr.id] = pr.name; });
+  }
+  state.posts.forEach(p => {
+    p.reactions = reactions.filter(r => r.post_id === p.id);
+    p.helpers = p.reactions.filter(r => r.type === 'help').map(r => helperNames[r.user_id] ?? 'Someone');
+  });
   render();
 }
 
@@ -138,6 +155,45 @@ async function quickAdd(kind, title) {
   });
   if (error) { console.error('quickAdd', error); return; }
   await loadFeed();
+}
+
+async function toggleReaction(post, type) {
+  const me = state.session.user.id;
+  const mine = post.reactions.some(r => r.user_id === me && r.type === type);
+  if (mine) {
+    await supabase.from('reactions').delete()
+      .eq('post_id', post.id).eq('user_id', me).eq('type', type);
+  } else {
+    await supabase.from('reactions').insert({ post_id: post.id, user_id: me, type });
+  }
+  await loadFeed();
+}
+
+async function attachToPost(postId, files) {
+  if (!files.length) return null;
+  const rows = files.map(f => ({ post_id: postId, filename: f.filename, content: f.content }));
+  const { error } = await supabase.from('post_files').insert(rows);
+  if (error) return error.message;
+  delete state.fileCache[postId];
+  await loadFeed();
+  return null;
+}
+
+async function updatePost(id, fields) {
+  const { error } = await supabase.from('posts').update({
+    tagline: fields.tagline || null,
+    link: fields.link || null,
+    tag: fields.tag || null,
+    kind: fields.kind,
+    looking_for_collab: fields.collab,
+    contact: fields.collab ? (fields.contact || null) : null,
+  }).eq('id', id);
+  return error ? error.message : null;
+}
+
+async function deleteFile(fileId, postId) {
+  await supabase.from('post_files').delete().eq('id', fileId);
+  delete state.fileCache[postId];
 }
 
 async function submitPost(fields) {
@@ -241,9 +297,10 @@ function postCard(p) {
         ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.title)} ↗</a>`
         : esc(p.title)}</div>
       ${p.tagline ? `<div class="card-tagline">${esc(p.tagline)}</div>` : ''}
-      ${files.length ? `
+      ${files.length || mine ? `
       <div class="file-row">
         ${files.map(f => `<button class="file-chip" data-act="open-files" title="View content">📄 ${esc(f.filename)}</button>`).join('')}
+        ${mine ? `<button class="linkish" data-act="add-content" title="Add files, a pitch, a link, tags, or collaborators to this post">＋ add details</button>` : ''}
       </div>` : ''}
       <div class="card-meta">
         ${p.tag ? `<span class="tag-pill">${esc(p.tag)}</span>` : ''}
@@ -261,6 +318,11 @@ function postCard(p) {
         <button class="linkish" data-act="comments">${open ? 'Hide' : ''} ${p.comments.length} comment${p.comments.length === 1 ? '' : 's'}</button>
         <span>·</span><button class="linkish" data-act="remix" title="Start your own version from this post">🔁 remix</button>
         ${mine ? `<span>·</span><button class="linkish danger" data-act="delete">delete</button>` : ''}
+      </div>
+      <div class="react-row">
+        <button class="react-btn ${p.reactions.some(r => r.user_id === me && r.type === 'want') ? 'active' : ''}" data-act="want">🙋 I want this${(n => n ? ` · ${n}` : '')(p.reactions.filter(r => r.type === 'want').length)}</button>
+        <button class="react-btn ${p.reactions.some(r => r.user_id === me && r.type === 'help') ? 'active' : ''}" data-act="help">🤝 I'll help${(n => n ? ` · ${n}` : '')(p.helpers.length)}</button>
+        ${p.helpers.length ? `<span class="helpers" title="People who offered to help">Helping: ${esc(p.helpers.join(', '))}</span>` : ''}
       </div>
       ${open ? `
       <div class="comments">
@@ -288,6 +350,7 @@ function heroRow(p) {
   return `<div class="hero-row">
     <button class="hero-vote ${voted ? 'voted' : ''}" data-hero-vote="${p.id}" title="${p.kind === 'problem' ? 'Me too, I want this solved' : 'Cheer it on'}">▲ ${p.votes.length}</button>
     <span class="hero-title">${esc(p.title)}</span>
+    ${p.helpers.length ? `<span class="hero-helpers" title="Helping: ${esc(p.helpers.join(', '))}">🤝 ${p.helpers.length}</span>` : ''}
     <span class="hero-author">${esc((p.profiles?.name ?? '').split(' ')[0])}</span>
   </div>`;
 }
@@ -302,6 +365,7 @@ function heroPanel(kind, head, emptyText, placeholder) {
     ${items.length ? items.map(heroRow).join('') : `<div class="hero-empty">${emptyText}</div>`}
     <form class="quick-add" data-kind="${kind}">
       <input type="text" name="title" maxlength="100" required placeholder="${placeholder}">
+      <button type="button" class="qa-attach" title="Add files, a link, or details">📎</button>
       <button type="submit">Add</button>
     </form>
   </div>`;
@@ -344,15 +408,19 @@ function feedView() {
     <div id="modal-root"></div>`;
 
   document.getElementById('new-post-btn').onclick = () => openPostModal();
-  app.querySelectorAll('.quick-add').forEach(form => form.onsubmit = async e => {
-    e.preventDefault();
-    const input = form.elements.title;
-    const title = input.value.trim();
-    if (!title) return;
-    const btn = form.querySelector('button');
-    if (btn.disabled) return;
-    btn.disabled = true;
-    await quickAdd(form.dataset.kind, title);
+  app.querySelectorAll('.quick-add').forEach(form => {
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const input = form.elements.title;
+      const title = input.value.trim();
+      if (!title) return;
+      const btn = form.querySelector('button[type="submit"]');
+      if (btn.disabled) return;
+      btn.disabled = true;
+      await quickAdd(form.dataset.kind, title);
+    };
+    form.querySelector('.qa-attach').onclick = () =>
+      openPostModal(null, { kind: form.dataset.kind, title: form.elements.title.value.trim() });
   });
   app.querySelectorAll('[data-hero-vote]').forEach(b => b.onclick = () => {
     const post = state.posts.find(p => p.id === b.dataset.heroVote);
@@ -378,6 +446,9 @@ function feedView() {
       render();
     };
     card.querySelector('[data-act="remix"]').onclick = () => openPostModal(post);
+    card.querySelector('[data-act="want"]').onclick = () => toggleReaction(post, 'want');
+    card.querySelector('[data-act="help"]').onclick = () => toggleReaction(post, 'help');
+    card.querySelector('[data-act="add-content"]')?.addEventListener('click', () => openEditModal(post));
     card.querySelector('[data-act="delete"]')?.addEventListener('click', () => deletePost(post.id));
     card.querySelectorAll('[data-act="del-comment"]').forEach(b =>
       b.onclick = () => deleteComment(b.dataset.cid, post.id));
@@ -497,7 +568,7 @@ function stageFile(filename, content, errBox) {
   renderPendingFiles();
 }
 
-async function openPostModal(remixSource = null) {
+async function openPostModal(remixSource = null, preset = null) {
   state.pendingFiles = [];
   state.remixOf = remixSource?.id ?? null;
   const root = document.getElementById('modal-root');
@@ -623,6 +694,13 @@ async function openPostModal(remixSource = null) {
       stageFile(file.name, text, errBox);
     }
   });
+  if (preset) {
+    if (preset.title) form.title.value = preset.title.slice(0, 100);
+    if (preset.kind) {
+      form.kind.value = preset.kind;
+      document.querySelector('.more-options').open = true;
+    }
+  }
   if (remixSource) {
     form.title.value = `${remixSource.title} (remix)`.slice(0, 100);
     if (remixSource.tagline) form.tagline.value = remixSource.tagline;
@@ -651,6 +729,126 @@ async function openPostModal(remixSource = null) {
       submitBtn.textContent = 'Post it';
     } else {
       root.innerHTML = '';
+    }
+  };
+}
+
+
+/* ---------------- add-details editor (own posts) ---------------- */
+
+async function openEditModal(post) {
+  state.pendingFiles = [];
+  const existing = await loadFiles(post.id);
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal">
+        <h2>Add to “${esc(post.title)}”</h2>
+        <form id="edit-form">
+          <div class="field">
+            <label>Content</label>
+            <div id="existing-files" class="pending-wrap">
+              ${existing.map(f => `<span class="pending-chip">📄 ${esc(f.filename)}
+                <button type="button" class="pending-x" data-delfile="${f.id}" title="Remove this file">✕</button></span>`).join('')}
+            </div>
+            <input type="file" id="edit-file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
+            <textarea id="edit-paste" rows="3" placeholder="Or paste content to attach…"></textarea>
+            <div class="kit-actions">
+              <button type="button" class="btn-secondary btn-sm" id="edit-paste-add">Add paste</button>
+              <span class="kit-status" id="edit-status"></span>
+            </div>
+            <div id="pending-files" class="pending-wrap"></div>
+          </div>
+          <div class="field">
+            <label>One-line pitch</label>
+            <input type="text" name="tagline" maxlength="240" value="${esc(post.tagline ?? '')}" placeholder="What it does and who it’s for">
+          </div>
+          <div class="field">
+            <label>Link</label>
+            <input type="url" name="link" value="${esc(post.link ?? '')}" placeholder="https://…">
+          </div>
+          <div class="field">
+            <label>Tag</label>
+            <select name="tag">
+              <option value="">No tag</option>
+              ${TAGS.map(t => `<option value="${esc(t)}" ${post.tag === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>What is this?</label>
+            <div class="radio-row">
+              <label class="radio-opt"><input type="radio" name="kind" value="original" ${post.kind === 'original' ? 'checked' : ''}> My build</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="wip" ${post.kind === 'wip' ? 'checked' : ''}> 🔨 Working on it</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="find" ${post.kind === 'find' ? 'checked' : ''}> 🔎 Someone else’s find</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="problem" ${post.kind === 'problem' ? 'checked' : ''}> 🙋 A problem I want solved</label>
+            </div>
+          </div>
+          <div class="field check-row">
+            <input type="checkbox" name="collab" id="edit-collab" ${post.looking_for_collab ? 'checked' : ''}>
+            <label for="edit-collab" style="margin:0">🤝 I’m looking for collaborators</label>
+          </div>
+          <div class="field" id="edit-contact-field" style="display:${post.looking_for_collab ? '' : 'none'}">
+            <label>How should people reach you?</label>
+            <input type="text" name="contact" maxlength="120" value="${esc(post.contact ?? '')}" placeholder="e.g. Slack @yitzy, or email">
+          </div>
+          <div class="form-error" id="edit-error"></div>
+          <div class="modal-actions">
+            <button type="button" class="btn-secondary" id="edit-cancel">Cancel</button>
+            <button type="submit" class="btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+  const overlay = document.getElementById('overlay');
+  const errBox = document.getElementById('edit-error');
+  const form = document.getElementById('edit-form');
+  overlay.onclick = e => { if (e.target === overlay) root.innerHTML = ''; };
+  document.getElementById('edit-cancel').onclick = () => { root.innerHTML = ''; };
+  document.getElementById('edit-collab').onchange = e => {
+    document.getElementById('edit-contact-field').style.display = e.target.checked ? '' : 'none';
+  };
+  root.querySelectorAll('[data-delfile]').forEach(b => b.onclick = async () => {
+    await deleteFile(b.dataset.delfile, post.id);
+    b.closest('.pending-chip').remove();
+  });
+  document.getElementById('edit-file-input').onchange = async e => {
+    for (const file of e.target.files) {
+      const text = await file.text();
+      stageFile(file.name, text, errBox);
+    }
+    e.target.value = '';
+  };
+  document.getElementById('edit-paste-add').onclick = () => {
+    const body = document.getElementById('edit-paste').value;
+    if (!body.trim()) { document.getElementById('edit-status').textContent = 'Paste something first.'; return; }
+    const base = post.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'content';
+    stageFile(base + '.md', body, errBox);
+    document.getElementById('edit-paste').value = '';
+    document.getElementById('edit-status').textContent = 'Staged. Hits the post when you Save.';
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn.disabled) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Saving…';
+    let err = await updatePost(post.id, {
+      tagline: form.tagline.value.trim(),
+      link: form.link.value.trim(),
+      tag: form.tag.value,
+      kind: form.kind.value,
+      collab: form.collab.checked,
+      contact: form.contact.value.trim(),
+    });
+    if (!err) err = await attachToPost(post.id, state.pendingFiles);
+    if (err) {
+      errBox.textContent = err;
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Save';
+    } else {
+      state.pendingFiles = [];
+      root.innerHTML = '';
+      await loadFeed();
     }
   };
 }
