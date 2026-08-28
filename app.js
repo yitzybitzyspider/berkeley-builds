@@ -252,9 +252,9 @@ function gcalUrl(ev) {
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   const p = new URLSearchParams({
     action: 'TEMPLATE',
-    text: ev.title + ' (Berkeley Builds)',
+    text: ev.title + ' (Haas Builds)',
     dates: fmt(start) + '/' + fmt(end),
-    details: 'Hosted by ' + (ev.hostName ?? 'a classmate') + ' via Berkeley Builds',
+    details: 'Hosted by ' + (ev.hostName ?? 'a classmate') + ' via Haas Builds',
   });
   if (ev.location) p.set('location', ev.location);
   return 'https://calendar.google.com/calendar/render?' + p.toString();
@@ -395,7 +395,7 @@ function loginView() {
     <div class="login-wrap">
       <div class="login-card">
         <div class="bear">🐻</div>
-        <h1>Berkeley Builds</h1>
+        <h1>Haas Builds</h1>
         <p class="tagline">What Haas is building with AI. Share yours, find collaborators, don’t build the same thing twice.</p>
         <button class="google-btn" id="login-btn">
           <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.2 6.1 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.1-2.6-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3l5.7-5.7C34.2 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C41 35.4 44 30.2 44 24c0-1.3-.1-2.6-.4-3.9z"/></svg>
@@ -529,7 +529,7 @@ function feedView() {
   app.innerHTML = `
     <header>
       <div class="header-inner">
-        <span class="logo">Berkeley <span class="gold">Builds</span> 🐻</span>
+        <span class="logo">Haas <span class="gold">Builds</span> 🐻</span>
         <nav class="views">
           <button class="${state.view === 'feed' ? 'active' : ''}" data-view="feed">Builds</button>
           <button class="${state.view === 'resources' ? 'active' : ''}" data-view="resources">📚 Resources</button>
@@ -575,7 +575,7 @@ function feedView() {
         ${state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
           : `<div class="empty">${state.view === 'resources' ? 'The shelf is empty. Post something with the type “Resource” and it lands here.' : `Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.`}</div>`}
       </div>
-      <footer>Berkeley Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>
+      <footer>Haas Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>
     </main>
     <div id="modal-root"></div>`;
 

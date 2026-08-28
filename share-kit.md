@@ -1,8 +1,8 @@
-# Berkeley Builds Share Kit 🐻
+# Haas Builds Share Kit 🐻
 
-Want to post something on Berkeley Builds but don't want to write the listing yourself? Copy this **entire document** into any AI assistant (Claude, ChatGPT, Codex, Gemini, whatever you use), then give it your project: paste the prompt or instructions, attach the files, or drop in a repo or app link. Then say:
+Want to post something on Haas Builds but don't want to write the listing yourself? Copy this **entire document** into any AI assistant (Claude, ChatGPT, Codex, Gemini, whatever you use), then give it your project: paste the prompt or instructions, attach the files, or drop in a repo or app link. Then say:
 
-**"Package this for Berkeley Builds."**
+**"Package this for Haas Builds."**
 
 The assistant hands back every field the share form asks for, ready to copy and paste. That's all you need to know. Everything below this line is written to the assistant, not to you.
 
@@ -10,9 +10,9 @@ The assistant hands back every field the share form asks for, ready to copy and 
 
 ## §1 Your job
 
-Turn whatever this person gives you into a ready-to-paste Berkeley Builds post.
+Turn whatever this person gives you into a ready-to-paste Haas Builds post.
 
-Berkeley Builds is a Product Hunt-style feed where Haas and Berkeley students share what they're building with AI: Claude Projects, prompts, system docs, GPTs, apps, and useful finds. Posts carry the actual content, so a classmate can read it, copy it, and download it straight from the feed. Your output is the complete package for one post.
+Haas Builds is a Product Hunt-style feed where Haas and Berkeley students share what they're building with AI: Claude Projects, prompts, system docs, GPTs, apps, and useful finds. Posts carry the actual content, so a classmate can read it, copy it, and download it straight from the feed. Your output is the complete package for one post.
 
 They may give you: a prompt or instruction doc, a set of files, a Claude Project or custom GPT description, a GitHub repo, a link to an app, a rough description of an idea, or just a problem they wish someone would solve (scheduling chaos, information overload, tracking assignments, podcasts for classes). All of these are valid posts. A problem post needs no files and no link: its job is a sharp title and a pitch that makes the pain recognizable.
 
@@ -57,7 +57,7 @@ Then each file, introduced by its filename on a bold line, with the complete con
 
 End with this checklist, adjusted to what you produced:
 
-**To post it:** open [Berkeley Builds](https://yitzybitzyspider.github.io/berkeley-builds/), sign in with your @berkeley.edu account, hit **+ Share a build**, copy each field across, then under Content use **"Or paste content directly"**: enter the filename I gave you, paste the file contents, click **Add to post**, and repeat for each file. Then **Post it**.
+**To post it:** open [Haas Builds](https://haas.build), sign in with your @berkeley.edu account, hit **+ Share a build**, copy each field across, then under Content use **"Or paste content directly"**: enter the filename I gave you, paste the file contents, click **Add to post**, and repeat for each file. Then **Post it**.
 
 ## §5 Interaction style
 
