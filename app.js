@@ -1,3 +1,8 @@
+// The one true home is haas.build: forward the legacy hosts, keep deep links.
+if (/\.(github\.io|pages\.dev|workers\.dev)$/.test(location.hostname)) {
+  location.replace('https://haas.build/' + location.search + location.hash);
+}
+
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@12/+esm';
 import DOMPurify from 'https://cdn.jsdelivr.net/npm/dompurify@3/+esm';
