@@ -364,3 +364,19 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
 
 /* ---------- hearts (v0.10.2) ---------- */
 .vote .heart { font-size: 1rem; line-height: 1; }
+
+/* ---------- profile (v0.11) ---------- */
+.profile-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem 1.1rem; margin-bottom: .9rem; }
+.profile-head { display: flex; align-items: center; gap: .8rem; }
+.profile-avatar { width: 52px; height: 52px; border-radius: 50%; }
+.profile-name { font-weight: 800; font-size: 1.15rem; }
+.profile-email { color: var(--muted); font-size: .85rem; }
+.profile-stats { display: flex; flex-wrap: wrap; gap: .9rem; margin-top: .8rem; font-size: .85rem; color: var(--muted); }
+.profile-section { margin-bottom: 1.1rem; }
+.profile-section h3 { font-size: .95rem; color: var(--blue); margin-bottom: .5rem; }
+.my-event {
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: .55rem .8rem; margin-bottom: .5rem; font-size: .88rem;
+  display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap;
+}
+.my-event-info { min-width: 0; }

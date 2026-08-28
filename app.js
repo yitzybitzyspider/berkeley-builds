@@ -26,7 +26,8 @@ const state = {
   pendingFiles: [],     // files staged in the share modal
   remixOf: null,        // post being remixed, while the share modal is open
   events: [],           // upcoming meetings
-  view: 'feed',         // 'feed' | 'resources'
+  view: 'feed',         // 'feed' | 'resources' | 'board' | 'me'
+  myEvents: [],
   deepLinkDone: false,
   awards: { topBuild: null, mostWanted: null, topCreator: null, topHelper: null },
   people: {},
@@ -132,6 +133,52 @@ function computeAwards() {
 function nameBadges(id) {
   return (state.awards.topCreator === id ? '<span title="Top creator right now">👑</span> ' : '')
     + (state.awards.topHelper === id ? '<span title="Most helpful person right now: the most 🤝 joins given">⭐ </span>' : '');
+}
+
+function profileHtml() {
+  const me = state.session.user.id;
+  const meta = state.session.user.user_metadata ?? {};
+  const myName = state.people[me] ?? meta.full_name ?? meta.name ?? 'You';
+  const row = state.board.find(r => r.id === me);
+  const myPosts = state.posts.filter(p => p.author === me);
+  const helping = state.posts.filter(p => (p.helperIds ?? []).includes(me) );
+  return `
+  <div class="profile-card">
+    <div class="profile-head">
+      ${meta.avatar_url ? `<img class="profile-avatar" src="${esc(meta.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
+      <div>
+        <div class="profile-name">${nameBadges(me)}${esc(myName)} <button class="linkish" id="edit-name">edit name</button></div>
+        <div class="profile-email">${esc(state.session.user.email ?? '')}</div>
+      </div>
+    </div>
+    ${row ? `<div class="profile-stats">
+      <span>🔨 ${row.builds} build${row.builds === 1 ? '' : 's'}</span>
+      <span>📚 ${row.resources}</span>
+      <span>🙋 ${row.problems}</span>
+      <span>🤝 ${row.helps} help${row.helps === 1 ? '' : 's'}</span>
+      <span>❤️ ${row.earned} engagement</span>
+      <span><b>${row.impact} impact</b></span>
+    </div>` : ''}
+  </div>
+  <div class="profile-section">
+    <h3>📅 Your meetings</h3>
+    ${state.myEvents.length ? state.myEvents.map(ev => `
+      <div class="my-event">
+        <span class="my-event-info"><b>${esc(ev.title)}</b> · ${new Date(ev.starts_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}${ev.location ? ` · ${esc(ev.location)}` : ''}</span>
+        <span class="doc-actions">
+          <button class="btn-secondary btn-sm" data-edit-event="${ev.id}">Edit</button>
+          <button class="btn-secondary btn-sm" data-del-event="${ev.id}">Cancel it</button>
+        </span>
+      </div>`).join('') : `<div class="hint">You haven’t hosted a meeting. <button class="linkish" id="host-meeting-profile">Host one</button></div>`}
+  </div>
+  <div class="profile-section">
+    <h3>Your posts (${myPosts.length})</h3>
+    ${myPosts.length ? `<div class="hint" style="margin-bottom:.5rem">“＋ add details” edits a post (title included); delete lives on each card.</div>` : ''}
+    ${myPosts.map(postCard).join('') || `<div class="hint">Nothing posted yet. Go share a build.</div>`}
+  </div>
+  ${helping.length ? `<div class="profile-section"><h3>🤝 You’re helping on</h3>
+    ${helping.map(p => `<div class="my-event"><span class="my-event-info">${esc(p.title)} <span class="hero-author">by ${esc(p.profiles?.name ?? 'Someone')}</span></span></div>`).join('')}
+  </div>` : ''}`;
 }
 
 function boardHtml() {
@@ -244,10 +291,33 @@ async function addEvent(fields) {
   return error ? error.message : null;
 }
 
+function toLocalInput(iso) {
+  const d = new Date(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function loadMyEvents() {
+  const { data } = await supabase.from('events').select('*')
+    .eq('host', state.session.user.id)
+    .order('starts_at', { ascending: false }).limit(20);
+  state.myEvents = data ?? [];
+}
+
+async function updateEvent(id, fields) {
+  const { error } = await supabase.from('events').update({
+    title: fields.title,
+    starts_at: fields.starts_at,
+    location: fields.location || null,
+  }).eq('id', id);
+  return error ? error.message : null;
+}
+
 async function deleteEvent(id) {
   if (!confirm('Cancel this meeting?')) return;
   await supabase.from('events').delete().eq('id', id);
   await loadEvents();
+  if (state.view === 'me') await loadMyEvents();
   render();
 }
 
@@ -331,6 +401,7 @@ async function attachToPost(postId, files) {
 
 async function updatePost(id, fields) {
   const { error } = await supabase.from('posts').update({
+    title: fields.title,
     tagline: fields.tagline || null,
     link: fields.link || null,
     tag: fields.tag || null,
@@ -549,7 +620,7 @@ function feedView() {
     <main>
       ${state.view === 'resources' ? `
       <div class="res-intro">📚 The shelf: guides, docs, and links worth keeping. Anything posted as a Resource lives here instead of the feed.</div>
-      ` : state.view === 'board' ? '' : `${(() => {
+      ` : (state.view === 'board' || state.view === 'me') ? '' : `${(() => {
         const ev = state.events[0];
         if (!ev) return `<div class="meet-banner meet-empty">📅 No meeting on the books. <button class="linkish" id="host-meeting">Host one</button></div>`;
         const when = new Date(ev.starts_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -566,7 +637,7 @@ function feedView() {
         ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
         ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
       </div>`}
-      ${state.view === 'board' ? '' : `<div class="controls">
+      ${(state.view === 'board' || state.view === 'me') ? '' : `<div class="controls">
         <div class="sort-tabs">
           <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Most helpful</button>
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
@@ -577,7 +648,7 @@ function feedView() {
         <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>` : ''}
       </div>`}
       <div id="feed">
-        ${state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
+        ${state.view === 'me' ? profileHtml() : state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
           : `<div class="empty">${state.view === 'resources' ? 'The shelf is empty. Post something with the type “Resource” and it lands here.' : `Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.`}</div>`}
       </div>
       <footer>Haas Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>
@@ -592,19 +663,28 @@ function feedView() {
   app.querySelectorAll('[data-del-event]').forEach(b => b.onclick = () => deleteEvent(b.dataset.delEvent));
   const avatarEl = app.querySelector('.avatar');
   if (avatarEl) {
-    avatarEl.title = 'Change the name classmates see';
+    avatarEl.title = 'Your profile: everything you’ve contributed';
     avatarEl.style.cursor = 'pointer';
     avatarEl.onclick = async () => {
-      const current = state.posts.find(p => p.author === u.id)?.profiles?.name
-        ?? meta.full_name ?? meta.name ?? '';
-      const name = prompt('Display name shown to classmates:', current);
-      if (name === null) return;
-      const trimmed = name.trim().slice(0, 80);
-      if (!trimmed) return;
-      await supabase.from('profiles').update({ name: trimmed }).eq('id', u.id);
-      await loadFeed();
+      await loadMyEvents();
+      state.view = 'me';
+      render();
     };
   }
+  document.getElementById('edit-name')?.addEventListener('click', async () => {
+    const current = state.people[u.id] ?? meta.full_name ?? meta.name ?? '';
+    const name = prompt('Display name shown to classmates:', current);
+    if (name === null) return;
+    const trimmed = name.trim().slice(0, 80);
+    if (!trimmed) return;
+    await supabase.from('profiles').update({ name: trimmed }).eq('id', u.id);
+    await loadFeed();
+  });
+  document.getElementById('host-meeting-profile')?.addEventListener('click', () => openMeetingModal());
+  app.querySelectorAll('[data-edit-event]').forEach(b => b.onclick = () => {
+    const ev = state.myEvents.find(x => x.id === b.dataset.editEvent);
+    if (ev) openMeetingModal(ev);
+  });
   app.querySelectorAll('.quick-add').forEach(form => {
     form.onsubmit = async e => {
       e.preventDefault();
@@ -941,12 +1021,13 @@ async function openPostModal(remixSource = null, preset = null) {
 
 /* ---------------- host a meeting ---------------- */
 
-function openMeetingModal() {
+function openMeetingModal(editEvent = null) {
+  if (!editEvent || !editEvent.id) editEvent = null; // guard: direct onclick passes an Event object
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal">
-        <h2>Host a meeting</h2>
+        <h2>${editEvent ? 'Edit meeting' : 'Host a meeting'}</h2>
         <form id="meeting-form">
           <div class="field">
             <input type="text" name="title" maxlength="100" required class="big-input" placeholder="e.g. Live coding session">
@@ -962,7 +1043,7 @@ function openMeetingModal() {
           <div class="form-error" id="meeting-error"></div>
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="meeting-cancel">Cancel</button>
-            <button type="submit" class="btn-primary">Put it on the board</button>
+            <button type="submit" class="btn-primary">${editEvent ? 'Save changes' : 'Put it on the board'}</button>
           </div>
         </form>
       </div>
@@ -970,23 +1051,31 @@ function openMeetingModal() {
   const overlay = document.getElementById('overlay');
   overlay.onclick = e => { if (e.target === overlay) root.innerHTML = ''; };
   document.getElementById('meeting-cancel').onclick = () => { root.innerHTML = ''; };
+  if (editEvent) {
+    const f = document.getElementById('meeting-form');
+    f.title.value = editEvent.title;
+    f.when.value = toLocalInput(editEvent.starts_at);
+    f.location.value = editEvent.location ?? '';
+  }
   document.getElementById('meeting-form').onsubmit = async e => {
     e.preventDefault();
     const f = e.target;
     const btn = f.querySelector('button[type="submit"]');
     if (btn.disabled) return;
     btn.disabled = true;
-    const err = await addEvent({
+    const fields = {
       title: f.title.value.trim(),
       starts_at: new Date(f.when.value).toISOString(),
       location: f.location.value.trim(),
-    });
+    };
+    const err = editEvent ? await updateEvent(editEvent.id, fields) : await addEvent(fields);
     if (err) {
       document.getElementById('meeting-error').textContent = err;
       btn.disabled = false;
     } else {
       root.innerHTML = '';
       await loadEvents();
+      if (state.view === 'me') await loadMyEvents();
       render();
     }
   };
@@ -1001,8 +1090,12 @@ async function openEditModal(post) {
   root.innerHTML = `
     <div class="modal-overlay" id="overlay">
       <div class="modal">
-        <h2>Add to “${esc(post.title)}”</h2>
+        <h2>Edit “${esc(post.title)}”</h2>
         <form id="edit-form">
+          <div class="field">
+            <label>Title</label>
+            <input type="text" name="title" maxlength="100" required value="${esc(post.title)}">
+          </div>
           <div class="field">
             <label>Content</label>
             <div id="existing-files" class="pending-wrap">
@@ -1092,6 +1185,7 @@ async function openEditModal(post) {
     submitBtn.disabled = true;
     submitBtn.textContent = 'Saving…';
     let err = await updatePost(post.id, {
+      title: form.title.value.trim(),
       tagline: form.tagline.value.trim(),
       link: form.link.value.trim(),
       tag: form.tag.value,
