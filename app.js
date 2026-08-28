@@ -132,13 +132,21 @@ async function toggleVote(post) {
   await loadFeed();
 }
 
+async function quickAdd(kind, title) {
+  const { error } = await supabase.from('posts').insert({
+    author: state.session.user.id, title, kind,
+  });
+  if (error) { console.error('quickAdd', error); return; }
+  await loadFeed();
+}
+
 async function submitPost(fields) {
   const { data, error } = await supabase.from('posts').insert({
     author: state.session.user.id,
     title: fields.title,
-    tagline: fields.tagline,
+    tagline: fields.tagline || null,
     link: fields.link || null,
-    tag: fields.tag,
+    tag: fields.tag || null,
     kind: fields.kind,
     looking_for_collab: fields.collab,
     contact: fields.collab ? (fields.contact || null) : null,
@@ -232,15 +240,16 @@ function postCard(p) {
       <div class="card-title">${p.link
         ? `<a href="${esc(p.link)}" target="_blank" rel="noopener">${esc(p.title)} ↗</a>`
         : esc(p.title)}</div>
-      <div class="card-tagline">${esc(p.tagline)}</div>
+      ${p.tagline ? `<div class="card-tagline">${esc(p.tagline)}</div>` : ''}
       ${files.length ? `
       <div class="file-row">
         ${files.map(f => `<button class="file-chip" data-act="open-files" title="View content">📄 ${esc(f.filename)}</button>`).join('')}
       </div>` : ''}
       <div class="card-meta">
-        <span class="tag-pill">${esc(p.tag)}</span>
+        ${p.tag ? `<span class="tag-pill">${esc(p.tag)}</span>` : ''}
         ${p.kind === 'find' ? `<span class="find-badge">🔎 Shared find</span>` : ''}
         ${p.kind === 'problem' ? `<span class="problem-badge">🙋 Problem to solve</span>` : ''}
+        ${p.kind === 'wip' ? `<span class="wip-badge">🔨 In the works</span>` : ''}
         ${p.remix_source ? `<span class="remix-badge" title="Built on top of another post">🔁 remix of “${esc(p.remix_source.title)}”</span>` : ''}
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
@@ -273,6 +282,31 @@ function postCard(p) {
   </div>`;
 }
 
+function heroRow(p) {
+  const me = state.session.user.id;
+  const voted = p.votes.some(v => v.user_id === me);
+  return `<div class="hero-row">
+    <button class="hero-vote ${voted ? 'voted' : ''}" data-hero-vote="${p.id}" title="${p.kind === 'problem' ? 'Me too, I want this solved' : 'Cheer it on'}">▲ ${p.votes.length}</button>
+    <span class="hero-title">${esc(p.title)}</span>
+    <span class="hero-author">${esc((p.profiles?.name ?? '').split(' ')[0])}</span>
+  </div>`;
+}
+
+function heroPanel(kind, head, emptyText, placeholder) {
+  const items = state.posts.filter(p => p.kind === kind)
+    .sort((a, b) => b.votes.length - a.votes.length || new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 6);
+  return `
+  <div class="hero-panel">
+    <div class="hero-head">${head}</div>
+    ${items.length ? items.map(heroRow).join('') : `<div class="hero-empty">${emptyText}</div>`}
+    <form class="quick-add" data-kind="${kind}">
+      <input type="text" name="title" maxlength="100" required placeholder="${placeholder}">
+      <button type="submit">Add</button>
+    </form>
+  </div>`;
+}
+
 function feedView() {
   const posts = visiblePosts();
   const u = state.session.user;
@@ -288,6 +322,10 @@ function feedView() {
       </div>
     </header>
     <main>
+      <div class="hero">
+        ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
+        ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
+      </div>
       <div class="controls">
         <div class="sort-tabs">
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
@@ -305,7 +343,21 @@ function feedView() {
     </main>
     <div id="modal-root"></div>`;
 
-  document.getElementById('new-post-btn').onclick = openPostModal;
+  document.getElementById('new-post-btn').onclick = () => openPostModal();
+  app.querySelectorAll('.quick-add').forEach(form => form.onsubmit = async e => {
+    e.preventDefault();
+    const input = form.elements.title;
+    const title = input.value.trim();
+    if (!title) return;
+    const btn = form.querySelector('button');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    await quickAdd(form.dataset.kind, title);
+  });
+  app.querySelectorAll('[data-hero-vote]').forEach(b => b.onclick = () => {
+    const post = state.posts.find(p => p.id === b.dataset.heroVote);
+    if (post) toggleVote(post);
+  });
   document.getElementById('signout-btn').onclick = async () => { await supabase.auth.signOut(); };
   document.getElementById('collab-filter').onclick = () => { state.collabOnly = !state.collabOnly; render(); };
   document.getElementById('problem-filter').onclick = () => { state.problemsOnly = !state.problemsOnly; render(); };
@@ -398,7 +450,9 @@ function parseShareKit(text) {
   if (/leave blank|^none$|^n\/a$|^-$/i.test(link)) link = '';
   out.fields.link = /^https?:\/\//i.test(link) ? link : '';
   const whose = grab('Whose') || grab('Kind');
-  out.fields.kind = /problem|solve|need|ask/i.test(whose) ? 'problem' : (/find|else/i.test(whose) ? 'find' : 'original');
+  out.fields.kind = /problem|solve|need|ask/i.test(whose) ? 'problem'
+    : (/working|progress|wip/i.test(whose) ? 'wip'
+    : (/find|else/i.test(whose) ? 'find' : 'original'));
   const tagRaw = grab('Tag');
   out.fields.tag = TAGS.find(t => t.toLowerCase() === tagRaw.toLowerCase())
     || (tagRaw && TAGS.find(t => t.toLowerCase().includes(tagRaw.toLowerCase())))
@@ -452,63 +506,55 @@ async function openPostModal(remixSource = null) {
       <div class="modal">
         <h2>${remixSource ? 'Remix this build' : 'Share a build'}</h2>
         ${remixSource ? `<div class="remix-note">🔁 Starting from <b>${esc(remixSource.title)}</b>. Its content is preloaded below: change what you want, credit stays automatic.</div>` : ''}
-        <div class="kit-box">
-          <div class="kit-title">⚡ The fast way</div>
-          <div class="hint">Paste the <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> (<button type="button" class="linkish" id="copy-kit">copy it</button>) into Claude or ChatGPT with your project, then paste its entire reply here. The form fills itself.</div>
-          <textarea id="kit-paste" rows="4" placeholder="Paste your assistant's whole reply here…"></textarea>
-          <div class="kit-actions">
-            <button type="button" class="btn-primary btn-sm" id="kit-fill">Fill the form</button>
-            <span class="kit-status" id="kit-status"></span>
-          </div>
-        </div>
         <form id="post-form">
           <div class="field">
-            <label>Title</label>
-            <input type="text" name="title" maxlength="100" required placeholder="e.g. The Resume System">
+            <input type="text" name="title" maxlength="100" required class="big-input" placeholder="Name it. That’s the only required field.">
           </div>
           <div class="field">
-            <label>One-line pitch</label>
-            <input type="text" name="tagline" maxlength="240" required placeholder="What it does and who it's for, in one sentence">
-          </div>
-          <div class="field">
-            <label>Link (optional)</label>
-            <input type="url" name="link" placeholder="https://…">
-            <div class="hint">Demo, GPT link, repo, deck. Ideas with no link are welcome too.</div>
-          </div>
-          <div class="field">
-            <label>Content (optional, this is the good part)</label>
-            <div class="hint" style="margin-bottom:.4rem">Attach the actual thing: Claude Project instructions, a prompt, a system doc. Upload, drag files anywhere onto this window, or paste below. Classmates read, copy, and download it right in the feed.</div>
-            <input type="file" id="file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
-            <div id="pending-files" class="pending-wrap"></div>
-            <details class="paste-details">
-              <summary>Or paste content directly</summary>
-              <input type="text" id="paste-name" placeholder="Name it, e.g. system-prompt.md" maxlength="120" style="margin:.4rem 0">
-              <textarea id="paste-body" rows="6" placeholder="Paste your prompt, instructions, or doc here…"></textarea>
-              <button type="button" class="btn-secondary btn-sm" id="paste-add" style="margin-top:.4rem">Add to post</button>
-            </details>
-          </div>
-          <div class="field">
-            <label>Whose is it?</label>
-            <div class="radio-row">
-              <label class="radio-opt"><input type="radio" name="kind" value="original" checked> My build</label>
-              <label class="radio-opt"><input type="radio" name="kind" value="find"> Someone else's find (a repo, app, or doc worth sharing)</label>
-              <label class="radio-opt"><input type="radio" name="kind" value="problem"> 🙋 A problem I want solved (no build yet, just the need)</label>
+            <div class="hint">Add the actual stuff (optional): drop files anywhere on this window, upload, or paste below. Pasting a <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a> reply (<button type="button" class="linkish" id="copy-kit">copy the kit</button>) from Claude or ChatGPT fills the whole form for you.</div>
+            <textarea id="smart-paste" rows="4" placeholder="Paste your prompt, doc, instructions, or your assistant’s Share Kit reply…"></textarea>
+            <div class="kit-actions">
+              <button type="button" class="btn-secondary btn-sm" id="smart-add">Add paste</button>
+              <input type="file" id="file-input" multiple accept=".md,.markdown,.txt,.json,.csv,.js,.py,.html,.xml,.yaml,.yml,.toml">
+              <span class="kit-status" id="kit-status"></span>
             </div>
+            <div id="pending-files" class="pending-wrap"></div>
           </div>
-          <div class="field">
-            <label>Tag</label>
-            <select name="tag" required>
-              ${TAGS.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="field check-row">
-            <input type="checkbox" name="collab" id="collab-check">
-            <label for="collab-check" style="margin:0">🤝 I’m looking for collaborators</label>
-          </div>
-          <div class="field" id="contact-field" style="display:none">
-            <label>How should people reach you?</label>
-            <input type="text" name="contact" maxlength="120" placeholder="e.g. Slack @yitzy, or email">
-          </div>
+          <details class="more-options">
+            <summary>More options: pitch, link, tag, type, collaborators</summary>
+            <div class="field" style="margin-top:.7rem">
+              <label>One-line pitch</label>
+              <input type="text" name="tagline" maxlength="240" placeholder="What it does and who it’s for">
+            </div>
+            <div class="field">
+              <label>Link</label>
+              <input type="url" name="link" placeholder="https://… (repo, GPT, demo, app)">
+            </div>
+            <div class="field">
+              <label>Tag</label>
+              <select name="tag">
+                <option value="">No tag</option>
+                ${TAGS.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>What is this?</label>
+              <div class="radio-row">
+                <label class="radio-opt"><input type="radio" name="kind" value="original" checked> My build</label>
+                <label class="radio-opt"><input type="radio" name="kind" value="wip"> 🔨 Working on it (in progress)</label>
+                <label class="radio-opt"><input type="radio" name="kind" value="find"> 🔎 Someone else’s find</label>
+                <label class="radio-opt"><input type="radio" name="kind" value="problem"> 🙋 A problem I want solved</label>
+              </div>
+            </div>
+            <div class="field check-row">
+              <input type="checkbox" name="collab" id="collab-check">
+              <label for="collab-check" style="margin:0">🤝 I’m looking for collaborators</label>
+            </div>
+            <div class="field" id="contact-field" style="display:none">
+              <label>How should people reach you?</label>
+              <input type="text" name="contact" maxlength="120" placeholder="e.g. Slack @yitzy, or email">
+            </div>
+          </details>
           <div class="form-error" id="form-error"></div>
           <div class="modal-actions">
             <button type="button" class="btn-secondary" id="cancel-btn">Cancel</button>
@@ -519,6 +565,7 @@ async function openPostModal(remixSource = null) {
     </div>`;
   const overlay = document.getElementById('overlay');
   const errBox = document.getElementById('form-error');
+  const form = document.getElementById('post-form');
   overlay.onclick = e => { if (e.target === overlay) { root.innerHTML = ''; state.remixOf = null; } };
   document.getElementById('cancel-btn').onclick = () => { root.innerHTML = ''; state.remixOf = null; };
   document.getElementById('collab-check').onchange = e => {
@@ -529,29 +576,42 @@ async function openPostModal(remixSource = null) {
     const kit = await fetch('share-kit.md').then(r => r.text());
     await navigator.clipboard.writeText(kit);
     btn.textContent = 'copied!';
-    setTimeout(() => { btn.textContent = 'copy it'; }, 1500);
+    setTimeout(() => { btn.textContent = 'copy the kit'; }, 1500);
   };
-  document.getElementById('kit-fill').onclick = () => {
-    const raw = document.getElementById('kit-paste').value;
-    const status = document.getElementById('kit-status');
-    if (!raw.trim()) { status.textContent = 'Paste your assistant’s reply first.'; return; }
-    const { fields, files } = parseShareKit(raw);
-    const f = document.getElementById('post-form');
-    if (fields.title) f.title.value = fields.title.slice(0, 100);
-    if (fields.tagline) f.tagline.value = fields.tagline.slice(0, 240);
-    if (fields.link) f.link.value = fields.link;
-    if (fields.tag) f.tag.value = fields.tag;
-    f.kind.value = fields.kind;
-    f.collab.checked = fields.collab;
-    document.getElementById('contact-field').style.display = fields.collab ? '' : 'none';
-    if (fields.contact) f.contact.value = fields.contact.slice(0, 120);
-    files.forEach(fl => stageFile(fl.filename, fl.content, errBox));
-    const got = [fields.title && 'title', fields.tagline && 'pitch', fields.link && 'link', fields.tag && 'tag'].filter(Boolean);
-    if (!got.length && !files.length) {
-      status.textContent = 'Couldn’t read that. Fill the form below instead.';
-    } else {
-      status.textContent = `Filled ${got.join(', ')}${files.length ? ` · staged ${files.length} file${files.length > 1 ? 's' : ''}` : ''}. Review, then Post it.`;
+  document.getElementById('file-input').onchange = async e => {
+    for (const file of e.target.files) {
+      const text = await file.text();
+      stageFile(file.name, text, errBox);
     }
+    e.target.value = '';
+  };
+  // Smart paste: a Share Kit reply fills the form; anything else becomes a content file.
+  document.getElementById('smart-add').onclick = () => {
+    const raw = document.getElementById('smart-paste').value;
+    const status = document.getElementById('kit-status');
+    if (!raw.trim()) { status.textContent = 'Paste something first.'; return; }
+    const looksLikeKit = /^[ \t>*_-]*(?:\*\*|__)?Title(?:\*\*|__)?[ \t]*:/im.test(raw)
+      && /^[ \t>*_-]*(?:\*\*|__)?(?:Pitch|Tagline|Tag|Whose|Collab)(?:\*\*|__)?[ \t]*:/im.test(raw);
+    if (looksLikeKit) {
+      const { fields, files } = parseShareKit(raw);
+      if (fields.title) form.title.value = fields.title.slice(0, 100);
+      if (fields.tagline) form.tagline.value = fields.tagline.slice(0, 240);
+      if (fields.link) form.link.value = fields.link;
+      form.tag.value = fields.tag || '';
+      form.kind.value = fields.kind;
+      form.collab.checked = fields.collab;
+      document.getElementById('contact-field').style.display = fields.collab ? '' : 'none';
+      if (fields.contact) form.contact.value = fields.contact.slice(0, 120);
+      files.forEach(fl => stageFile(fl.filename, fl.content, errBox));
+      document.querySelector('.more-options').open = true;
+      status.textContent = `Share Kit read: form filled${files.length ? `, ${files.length} file${files.length > 1 ? 's' : ''} staged` : ''}. Review, then Post it.`;
+    } else {
+      const base = (form.title.value.trim() || 'content')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'content';
+      stageFile(base + '.md', raw, errBox);
+      status.textContent = 'Added as a content file.';
+    }
+    document.getElementById('smart-paste').value = '';
   };
   const modalEl = root.querySelector('.modal');
   modalEl.addEventListener('dragover', e => { e.preventDefault(); modalEl.classList.add('dragging'); });
@@ -563,44 +623,27 @@ async function openPostModal(remixSource = null) {
       stageFile(file.name, text, errBox);
     }
   });
-  document.getElementById('file-input').onchange = async e => {
-    for (const file of e.target.files) {
-      const text = await file.text();
-      stageFile(file.name, text, errBox);
-    }
-    e.target.value = '';
-  };
-  document.getElementById('paste-add').onclick = () => {
-    const name = document.getElementById('paste-name').value.trim() || 'untitled.md';
-    const body = document.getElementById('paste-body').value;
-    if (!body.trim()) { errBox.textContent = 'Paste some content first.'; return; }
-    stageFile(name, body, errBox);
-    document.getElementById('paste-name').value = '';
-    document.getElementById('paste-body').value = '';
-  };
   if (remixSource) {
-    const f = document.getElementById('post-form');
-    f.title.value = `${remixSource.title} (remix)`.slice(0, 100);
-    f.tagline.value = remixSource.tagline;
-    f.tag.value = remixSource.tag;
+    form.title.value = `${remixSource.title} (remix)`.slice(0, 100);
+    if (remixSource.tagline) form.tagline.value = remixSource.tagline;
+    form.tag.value = remixSource.tag || '';
     const srcFiles = await loadFiles(remixSource.id);
     srcFiles.forEach(fl => stageFile(fl.filename, fl.content, errBox));
   }
-  document.getElementById('post-form').onsubmit = async e => {
+  form.onsubmit = async e => {
     e.preventDefault();
-    const f = e.target;
-    const submitBtn = f.querySelector('button[type="submit"]');
+    const submitBtn = form.querySelector('button[type="submit"]');
     if (submitBtn.disabled) return;
     submitBtn.disabled = true;
     submitBtn.textContent = 'Posting…';
     const err = await submitPost({
-      title: f.title.value.trim(),
-      tagline: f.tagline.value.trim(),
-      link: f.link.value.trim(),
-      tag: f.tag.value,
-      kind: f.kind.value,
-      collab: f.collab.checked,
-      contact: f.contact.value.trim(),
+      title: form.title.value.trim(),
+      tagline: form.tagline.value.trim(),
+      link: form.link.value.trim(),
+      tag: form.tag.value,
+      kind: form.kind.value,
+      collab: form.collab.checked,
+      contact: form.contact.value.trim(),
     });
     if (err) {
       errBox.textContent = err;
