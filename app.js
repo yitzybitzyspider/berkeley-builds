@@ -613,7 +613,9 @@ function feedView() {
         </nav>
         <div class="header-spacer"></div>
         <button class="share-btn" id="new-post-btn">+ Share a build</button>
-        ${meta.avatar_url ? `<img class="avatar" src="${esc(meta.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
+        ${meta.avatar_url
+          ? `<img class="avatar" src="${esc(meta.avatar_url)}" alt="" referrerpolicy="no-referrer">`
+          : `<button class="avatar avatar-fallback" type="button">👤</button>`}
         <button class="signout" id="signout-btn">Sign out</button>
       </div>
     </header>

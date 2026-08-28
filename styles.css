@@ -380,3 +380,4 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
   display: flex; justify-content: space-between; align-items: center; gap: .6rem; flex-wrap: wrap;
 }
 .my-event-info { min-width: 0; }
+.avatar-fallback { border: none; display: flex; align-items: center; justify-content: center; font-size: 1rem; padding: 0; }
