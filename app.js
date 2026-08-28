@@ -23,7 +23,9 @@ const state = {
   events: [],           // upcoming meetings
   view: 'feed',         // 'feed' | 'resources'
   deepLinkDone: false,
-  awards: { topBuild: null, mostWanted: null, topCreator: null },
+  awards: { topBuild: null, mostWanted: null, topCreator: null, topHelper: null },
+  people: {},
+  board: [],
   loginError: null,
 };
 
@@ -95,11 +97,52 @@ function computeAwards() {
   const byAuthor = {};
   scored.forEach(x => { byAuthor[x.p.author] = (byAuthor[x.p.author] ?? 0) + x.s; });
   const top = Object.entries(byAuthor).sort((a, b) => b[1] - a[1])[0];
+  const helpsBy = {};
+  state.posts.forEach(p => (p.helperIds ?? []).forEach(id => { helpsBy[id] = (helpsBy[id] ?? 0) + 1; }));
+  const topH = Object.entries(helpsBy).sort((a, b) => b[1] - a[1])[0];
   state.awards = {
     topBuild: builds[0]?.p.id ?? null,
     mostWanted: probs[0]?.p.id ?? null,
     topCreator: top && top[1] > 0 ? top[0] : null,
+    topHelper: topH && topH[1] > 0 ? topH[0] : null,
   };
+  const rows = {};
+  const ensure = id => rows[id] ?? (rows[id] = {
+    id, name: state.people[id] ?? 'Someone',
+    builds: 0, resources: 0, problems: 0, helps: helpsBy[id] ?? 0, earned: 0,
+  });
+  state.posts.forEach(p => {
+    const r = ensure(p.author);
+    if (p.kind === 'resource') r.resources += 1;
+    else if (p.kind === 'problem') r.problems += 1;
+    else r.builds += 1;
+    r.earned += score(p);
+  });
+  Object.keys(helpsBy).forEach(ensure);
+  state.board = Object.values(rows)
+    .map(r => ({ ...r, impact: r.earned + 2 * r.helps + r.builds + r.resources }))
+    .sort((a, b) => b.impact - a.impact);
+}
+
+function nameBadges(id) {
+  return (state.awards.topCreator === id ? '<span title="Top creator right now">👑</span> ' : '')
+    + (state.awards.topHelper === id ? '<span title="Most helpful person right now: the most 🤝 joins given">⭐ </span>' : '');
+}
+
+function boardHtml() {
+  if (!state.board.length) return `<div class="empty">Nobody on the board yet. Post, help, react: it all counts.</div>`;
+  return `<div class="board-wrap"><table class="board">
+    <thead><tr><th></th><th>Who</th><th title="Builds and finds posted">🔨 Builds</th><th title="Resources shared">📚 Resources</th><th title="Problems raised">🙋 Problems</th><th title="Times they joined to help someone">🤝 Helps</th><th title="Votes, wants, helpers, and comments earned by their posts">Engagement</th><th title="Engagement + 2x helps + posts">Impact</th></tr></thead>
+    <tbody>
+      ${state.board.map((r, i) => `<tr>
+        <td class="board-rank">${['🥇', '🥈', '🥉'][i] ?? i + 1}</td>
+        <td class="board-name">${nameBadges(r.id)}${esc(r.name)}</td>
+        <td>${r.builds || ''}</td><td>${r.resources || ''}</td><td>${r.problems || ''}</td>
+        <td>${r.helps || ''}</td><td>${r.earned || ''}</td><td class="board-impact">${r.impact}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <div class="hint" style="margin-top:.5rem">⭐ goes to the most helpful person (most 🤝 joins given). 👑 goes to the top creator. Both are live titles: they move.</div></div>`;
 }
 
 function postSlug(p) {
@@ -152,15 +195,18 @@ async function loadFeed() {
     const { data: rx } = await supabase.from('reactions').select('post_id, user_id, type').in('post_id', postIds);
     reactions = rx ?? [];
   }
-  const helperIds = [...new Set(reactions.filter(r => r.type === 'help').map(r => r.user_id))];
-  const helperNames = {};
-  if (helperIds.length) {
-    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', helperIds);
-    (profs ?? []).forEach(pr => { helperNames[pr.id] = pr.name; });
+  const people = {};
+  state.posts.forEach(p => { if (p.profiles?.name) people[p.author] = p.profiles.name; });
+  const unknownIds = [...new Set(reactions.map(r => r.user_id))].filter(id => !people[id]);
+  if (unknownIds.length) {
+    const { data: profs } = await supabase.from('profiles').select('id, name').in('id', unknownIds);
+    (profs ?? []).forEach(pr => { people[pr.id] = pr.name; });
   }
+  state.people = people;
   state.posts.forEach(p => {
     p.reactions = reactions.filter(r => r.post_id === p.id);
-    p.helpers = p.reactions.filter(r => r.type === 'help').map(r => helperNames[r.user_id] ?? 'Someone');
+    p.helperIds = p.reactions.filter(r => r.type === 'help').map(r => r.user_id);
+    p.helpers = p.helperIds.map(id => people[id] ?? 'Someone');
   });
   computeAwards();
   render();
@@ -415,7 +461,7 @@ function postCard(p) {
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
           ${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
-          ${state.awards.topCreator === p.author ? `<span title="Top creator on the board right now">👑</span> ` : ''}${esc(author.name ?? 'Someone')}
+          ${nameBadges(p.author)}${esc(author.name ?? 'Someone')}
         </span>
         <span>·</span><span>${timeAgo(p.created_at)}</span>
         <span>·</span>
@@ -427,7 +473,7 @@ function postCard(p) {
       <div class="react-row">
         <button class="react-btn ${p.reactions.some(r => r.user_id === me && r.type === 'want') ? 'active' : ''}" data-act="want">🙋 I want this${(n => n ? ` · ${n}` : '')(p.reactions.filter(r => r.type === 'want').length)}</button>
         <button class="react-btn ${p.reactions.some(r => r.user_id === me && r.type === 'help') ? 'active' : ''}" data-act="help">🤝 I'll help${(n => n ? ` · ${n}` : '')(p.helpers.length)}</button>
-        ${p.helpers.length ? `<span class="helpers" title="People who offered to help">Helping: ${esc(p.helpers.join(', '))}</span>` : ''}
+        ${p.helpers.length ? `<span class="helpers" title="People who offered to help">Helping: ${p.helperIds.map((id, i) => nameBadges(id) + esc(p.helpers[i])).join(', ')}</span>` : ''}
       </div>
       ${open ? `
       <div class="comments">
@@ -487,6 +533,7 @@ function feedView() {
         <nav class="views">
           <button class="${state.view === 'feed' ? 'active' : ''}" data-view="feed">Builds</button>
           <button class="${state.view === 'resources' ? 'active' : ''}" data-view="resources">📚 Resources</button>
+          <button class="${state.view === 'board' ? 'active' : ''}" data-view="board">🏅 Board</button>
         </nav>
         <div class="header-spacer"></div>
         <button class="share-btn" id="new-post-btn">+ Share a build</button>
@@ -497,7 +544,7 @@ function feedView() {
     <main>
       ${state.view === 'resources' ? `
       <div class="res-intro">📚 The shelf: guides, docs, and links worth keeping. Anything posted as a Resource lives here instead of the feed.</div>
-      ` : `${(() => {
+      ` : state.view === 'board' ? '' : `${(() => {
         const ev = state.events[0];
         if (!ev) return `<div class="meet-banner meet-empty">📅 No meeting on the books. <button class="linkish" id="host-meeting">Host one</button></div>`;
         const when = new Date(ev.starts_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -514,7 +561,7 @@ function feedView() {
         ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
         ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
       </div>`}
-      <div class="controls">
+      ${state.view === 'board' ? '' : `<div class="controls">
         <div class="sort-tabs">
           <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Most helpful</button>
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
@@ -523,9 +570,9 @@ function feedView() {
         ${TAGS.map(t => `<button class="chip ${state.tag === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
         <button class="chip ${state.collabOnly ? 'active' : ''}" id="collab-filter">🤝 Wants collaborators</button>
         <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>` : ''}
-      </div>
+      </div>`}
       <div id="feed">
-        ${posts.length ? posts.map(postCard).join('')
+        ${state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
           : `<div class="empty">${state.view === 'resources' ? 'The shelf is empty. Post something with the type “Resource” and it lands here.' : `Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.`}</div>`}
       </div>
       <footer>Berkeley Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>

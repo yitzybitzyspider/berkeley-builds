@@ -351,3 +351,13 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
   background: linear-gradient(135deg, #fff3d6, #ffe49a); border: 1px solid var(--gold);
   color: var(--blue-dark); border-radius: 999px; padding: .15rem .6rem; font-weight: 800;
 }
+
+/* ---------- leaderboard (v0.9) ---------- */
+.board-wrap { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 1rem; overflow-x: auto; }
+.board { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.board th { text-align: left; font-size: .75rem; color: var(--muted); padding: .35rem .6rem; border-bottom: 2px solid var(--line); white-space: nowrap; }
+.board td { padding: .5rem .6rem; border-bottom: 1px solid var(--line); }
+.board tbody tr:last-child td { border-bottom: none; }
+.board-rank { font-size: 1rem; width: 2rem; }
+.board-name { font-weight: 700; }
+.board-impact { font-weight: 800; color: var(--blue); }
