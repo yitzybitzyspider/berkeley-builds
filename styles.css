@@ -336,3 +336,12 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
 }
 .meet-empty { background: #eef2f7; color: var(--muted); }
 .meet-empty .linkish { color: var(--blue); }
+
+/* ---------- resources tab + deep links (v0.7) ---------- */
+.views { display: flex; gap: .15rem; background: rgba(255,255,255,.12); border-radius: 9px; padding: .18rem; margin-left: .6rem; }
+.views button { border: none; background: none; color: rgba(255,255,255,.8); font-size: .82rem; font-weight: 600; padding: .3rem .7rem; border-radius: 7px; }
+.views button.active { background: var(--gold); color: var(--blue-dark); font-weight: 700; }
+.res-intro { background: var(--gold-soft); border: 1px solid var(--gold); border-radius: var(--radius); padding: .6rem .9rem; font-size: .85rem; margin-bottom: .9rem; }
+@keyframes flashfade { 0% { box-shadow: 0 0 0 3px var(--gold); } 100% { box-shadow: 0 0 0 3px transparent; } }
+.card.flash { animation: flashfade 2.5s ease-out 1; }
+@media (max-width: 560px) { .views { margin-left: .2rem; } .views button { padding: .3rem .5rem; font-size: .75rem; } }

@@ -21,6 +21,8 @@ const state = {
   pendingFiles: [],     // files staged in the share modal
   remixOf: null,        // post being remixed, while the share modal is open
   events: [],           // upcoming meetings
+  view: 'feed',         // 'feed' | 'resources'
+  deepLinkDone: false,
   loginError: null,
 };
 
@@ -79,6 +81,31 @@ function downloadText(filename, content) {
   URL.revokeObjectURL(url);
 }
 
+function postSlug(p) {
+  const s = p.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50);
+  return (s || 'post') + '-' + p.id.slice(0, 8);
+}
+
+function postUrl(p) {
+  return location.origin + location.pathname + '#p=' + postSlug(p);
+}
+
+function handleDeepLink() {
+  if (state.deepLinkDone) return;
+  const m = location.hash.match(/^#p=(?:.*-)?([0-9a-f]{8})$/);
+  if (!m) return;
+  const post = state.posts.find(p => p.id.startsWith(m[1]));
+  if (!post) return;
+  state.deepLinkDone = true;
+  state.view = post.kind === 'resource' ? 'resources' : 'feed';
+  render();
+  if ((post.post_files ?? []).length) openContentModal(post);
+  const card = app.querySelector(`.card[data-id="${post.id}"]`);
+  if (card) { card.scrollIntoView({ block: 'center' }); card.classList.add('flash'); }
+}
+
+window.addEventListener('hashchange', () => { state.deepLinkDone = false; handleDeepLink(); });
+
 /* ---------------- data ---------------- */
 
 async function loadFeed() {
@@ -115,6 +142,7 @@ async function loadFeed() {
     p.helpers = p.reactions.filter(r => r.type === 'help').map(r => helperNames[r.user_id] ?? 'Someone');
   });
   render();
+  handleDeepLink();
 }
 
 async function loadEvents() {
@@ -310,6 +338,7 @@ function loginView() {
       </div>
     </div>`;
   document.getElementById('login-btn').onclick = () => {
+    try { if (location.hash.startsWith('#p=')) localStorage.setItem('bb-deeplink', location.hash); } catch (e) {}
     supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: location.origin + location.pathname },
@@ -318,7 +347,9 @@ function loginView() {
 }
 
 function visiblePosts() {
-  let posts = [...state.posts];
+  let posts = state.view === 'resources'
+    ? state.posts.filter(p => p.kind === 'resource')
+    : state.posts.filter(p => p.kind !== 'resource');
   if (state.tag) posts = posts.filter(p => p.tag === state.tag);
   if (state.collabOnly) posts = posts.filter(p => p.looking_for_collab);
   if (state.problemsOnly) posts = posts.filter(p => p.kind === 'problem');
@@ -366,6 +397,7 @@ function postCard(p) {
         <span>·</span>
         <button class="linkish" data-act="comments">${open ? 'Hide' : ''} ${p.comments.length} comment${p.comments.length === 1 ? '' : 's'}</button>
         <span>·</span><button class="linkish" data-act="remix" title="Start your own version from this post">🔁 remix</button>
+        <span>·</span><button class="linkish" data-act="share" title="Copy a direct link to this post">🔗 share</button>
         ${mine ? `<span>·</span><button class="linkish danger" data-act="delete">delete</button>` : ''}
       </div>
       <div class="react-row">
@@ -428,6 +460,10 @@ function feedView() {
     <header>
       <div class="header-inner">
         <span class="logo">Berkeley <span class="gold">Builds</span> 🐻</span>
+        <nav class="views">
+          <button class="${state.view === 'feed' ? 'active' : ''}" data-view="feed">Builds</button>
+          <button class="${state.view === 'resources' ? 'active' : ''}" data-view="resources">📚 Resources</button>
+        </nav>
         <div class="header-spacer"></div>
         <button class="share-btn" id="new-post-btn">+ Share a build</button>
         ${meta.avatar_url ? `<img class="avatar" src="${esc(meta.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
@@ -435,7 +471,9 @@ function feedView() {
       </div>
     </header>
     <main>
-      ${(() => {
+      ${state.view === 'resources' ? `
+      <div class="res-intro">📚 The shelf: guides, docs, and links worth keeping. Anything posted as a Resource lives here instead of the feed.</div>
+      ` : `${(() => {
         const ev = state.events[0];
         if (!ev) return `<div class="meet-banner meet-empty">📅 No meeting on the books. <button class="linkish" id="host-meeting">Host one</button></div>`;
         const when = new Date(ev.starts_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -451,26 +489,30 @@ function feedView() {
       <div class="hero">
         ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
         ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
-      </div>
+      </div>`}
       <div class="controls">
         <div class="sort-tabs">
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
           <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Top</button>
         </div>
+        ${state.view === 'feed' ? `
         ${TAGS.map(t => `<button class="chip ${state.tag === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}
         <button class="chip ${state.collabOnly ? 'active' : ''}" id="collab-filter">🤝 Wants collaborators</button>
-        <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>
+        <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>` : ''}
       </div>
       <div id="feed">
         ${posts.length ? posts.map(postCard).join('')
-          : `<div class="empty">Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.</div>`}
+          : `<div class="empty">${state.view === 'resources' ? 'The shelf is empty. Post something with the type “Resource” and it lands here.' : `Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.`}</div>`}
       </div>
       <footer>Berkeley Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>
     </main>
     <div id="modal-root"></div>`;
 
-  document.getElementById('new-post-btn').onclick = () => openPostModal();
-  document.getElementById('host-meeting').onclick = openMeetingModal;
+  document.getElementById('new-post-btn').onclick = () =>
+    openPostModal(null, state.view === 'resources' ? { kind: 'resource' } : null);
+  app.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); });
+  const hostBtn = document.getElementById('host-meeting');
+  if (hostBtn) hostBtn.onclick = openMeetingModal;
   app.querySelectorAll('[data-del-event]').forEach(b => b.onclick = () => deleteEvent(b.dataset.delEvent));
   const avatarEl = app.querySelector('.avatar');
   if (avatarEl) {
@@ -506,8 +548,8 @@ function feedView() {
     if (post) toggleVote(post);
   });
   document.getElementById('signout-btn').onclick = async () => { await supabase.auth.signOut(); };
-  document.getElementById('collab-filter').onclick = () => { state.collabOnly = !state.collabOnly; render(); };
-  document.getElementById('problem-filter').onclick = () => { state.problemsOnly = !state.problemsOnly; render(); };
+  document.getElementById('collab-filter')?.addEventListener('click', () => { state.collabOnly = !state.collabOnly; render(); });
+  document.getElementById('problem-filter')?.addEventListener('click', () => { state.problemsOnly = !state.problemsOnly; render(); });
   app.querySelectorAll('[data-sort]').forEach(b => b.onclick = () => { state.sort = b.dataset.sort; render(); });
   app.querySelectorAll('[data-tag]').forEach(b => b.onclick = () => {
     state.tag = state.tag === b.dataset.tag ? null : b.dataset.tag; render();
@@ -525,6 +567,11 @@ function feedView() {
       render();
     };
     card.querySelector('[data-act="remix"]').onclick = () => openPostModal(post);
+    card.querySelector('[data-act="share"]').onclick = async e => {
+      await navigator.clipboard.writeText(postUrl(post));
+      e.target.textContent = '🔗 copied!';
+      setTimeout(() => { e.target.textContent = '🔗 share'; }, 1500);
+    };
     card.querySelector('[data-act="want"]').onclick = () => toggleReaction(post, 'want');
     card.querySelector('[data-act="help"]').onclick = () => toggleReaction(post, 'help');
     card.querySelector('[data-act="add-content"]')?.addEventListener('click', () => openEditModal(post));
@@ -600,7 +647,8 @@ function parseShareKit(text) {
   if (/leave blank|^none$|^n\/a$|^-$/i.test(link)) link = '';
   out.fields.link = /^https?:\/\//i.test(link) ? link : '';
   const whose = grab('Whose') || grab('Kind');
-  out.fields.kind = /problem|solve|need|ask/i.test(whose) ? 'problem'
+  out.fields.kind = /resource|guide|reference/i.test(whose) ? 'resource'
+    : /problem|solve|need|ask/i.test(whose) ? 'problem'
     : (/working|progress|wip/i.test(whose) ? 'wip'
     : (/find|else/i.test(whose) ? 'find' : 'original'));
   const tagRaw = grab('Tag');
@@ -694,6 +742,7 @@ async function openPostModal(remixSource = null, preset = null) {
                 <label class="radio-opt"><input type="radio" name="kind" value="wip"> 🔨 Working on it (in progress)</label>
                 <label class="radio-opt"><input type="radio" name="kind" value="find"> 🔎 Someone else’s find</label>
                 <label class="radio-opt"><input type="radio" name="kind" value="problem"> 🙋 A problem I want solved</label>
+                <label class="radio-opt"><input type="radio" name="kind" value="resource"> 📚 A resource (guide, doc, or link worth keeping)</label>
               </div>
             </div>
             <div class="field check-row">
@@ -914,6 +963,7 @@ async function openEditModal(post) {
               <label class="radio-opt"><input type="radio" name="kind" value="wip" ${post.kind === 'wip' ? 'checked' : ''}> 🔨 Working on it</label>
               <label class="radio-opt"><input type="radio" name="kind" value="find" ${post.kind === 'find' ? 'checked' : ''}> 🔎 Someone else’s find</label>
               <label class="radio-opt"><input type="radio" name="kind" value="problem" ${post.kind === 'problem' ? 'checked' : ''}> 🙋 A problem I want solved</label>
+              <label class="radio-opt"><input type="radio" name="kind" value="resource" ${post.kind === 'resource' ? 'checked' : ''}> 📚 A resource</label>
             </div>
           </div>
           <div class="field check-row">
@@ -998,7 +1048,14 @@ captureAuthErrorFromUrl();
 supabase.auth.onAuthStateChange((_event, session) => {
   const hadSession = !!state.session;
   state.session = session;
-  if (session && !hadSession) { state.loginError = null; loadFeed(); }
+  if (session && !hadSession) {
+    state.loginError = null;
+    try {
+      const dl = localStorage.getItem('bb-deeplink');
+      if (dl) { localStorage.removeItem('bb-deeplink'); history.replaceState(null, '', location.pathname + dl); state.deepLinkDone = false; }
+    } catch (e) {}
+    loadFeed();
+  }
   else if (!session && hadSession) render();
   // Token refreshes and tab-refocus events change nothing visible: leave the
   // DOM alone so open modals and half-typed forms survive.

@@ -23,7 +23,7 @@ They may give you: a prompt or instruction doc, a set of files, a Claude Project
 | Title | 100 characters max. The name of the thing, clear before clever. One emoji at the front is welcome if it genuinely fits. |
 | One-line pitch | 240 characters max. What it does and who it's for, in one sentence. |
 | Link | Optional. Must start with http:// or https://. Repo, GPT link, live app, demo, deck. |
-| Whose is it | Exactly one: **My build**, **Working on it** (in progress), **Someone else's find**, or **A problem I want solved**. |
+| Whose is it | Exactly one: **My build**, **Working on it** (in progress), **Someone else's find**, **A problem I want solved**, or **A resource** (a guide, doc, or link worth keeping; lands on the Resources shelf). |
 | Tag | Exactly one of: **Class Tool**, **Career/Recruiting**, **Prompt or GPT**, **Startup Idea**, **Design/Creative**, **Just for Fun**. |
 | Collaborators | Yes or no. If yes, a contact line of 120 characters max (Slack handle, email). |
 | Content files | Text files only. Each file: filename 120 characters max, content 300,000 characters max. Markdown (.md) renders formatted in the site's viewer; .txt, .json, .js, .py show as plain text. |
@@ -48,7 +48,7 @@ POST FIELDS
 Title:    <title>
 Pitch:    <one-line pitch>
 Link:     <url, or "leave blank">
-Whose:    My build | Working on it | Someone else's find | A problem I want solved
+Whose:    My build | Working on it | Someone else's find | A problem I want solved | A resource
 Tag:      <one of the six tags>
 Collab:   No | Yes, contact: <contact line>
 ```
