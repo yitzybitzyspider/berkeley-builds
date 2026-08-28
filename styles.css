@@ -361,3 +361,6 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
 .board-rank { font-size: 1rem; width: 2rem; }
 .board-name { font-weight: 700; }
 .board-impact { font-weight: 800; color: var(--blue); }
+
+/* ---------- hearts (v0.10.2) ---------- */
+.vote .heart { font-size: 1rem; line-height: 1; }

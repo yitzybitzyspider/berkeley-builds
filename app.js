@@ -442,8 +442,8 @@ function postCard(p) {
   const files = p.post_files ?? [];
   return `
   <div class="card ${p.kind === 'problem' ? 'card-problem' : ''}" data-id="${p.id}">
-    <button class="vote ${voted ? 'voted' : ''}" data-act="vote" title="${p.kind === 'problem' ? (voted ? 'Remove me too' : 'Me too, I want this solved') : (voted ? 'Remove upvote' : 'Upvote')}">
-      <span class="tri">▲</span><span class="count">${p.votes.length}</span>
+    <button class="vote ${voted ? 'voted' : ''}" data-act="vote" title="${p.kind === 'problem' ? (voted ? 'Remove me too' : 'Me too, I want this solved') : (voted ? 'Unlove' : 'Love it')}">
+      <span class="heart">${voted ? '❤️' : '🤍'}</span><span class="count">${p.votes.length}</span>
     </button>
     <div class="card-body">
       <div class="card-title">${p.link
@@ -504,7 +504,7 @@ function heroRow(p) {
   const me = state.session.user.id;
   const voted = p.votes.some(v => v.user_id === me);
   return `<div class="hero-row">
-    <button class="hero-vote ${voted ? 'voted' : ''}" data-hero-vote="${p.id}" title="${p.kind === 'problem' ? 'Me too, I want this solved' : 'Cheer it on'}">▲ ${p.votes.length}</button>
+    <button class="hero-vote ${voted ? 'voted' : ''}" data-hero-vote="${p.id}" title="${p.kind === 'problem' ? 'Me too, I want this solved' : 'Love it'}">${voted ? '❤️' : '🤍'} ${p.votes.length}</button>
     <span class="hero-title">${esc(p.title)}</span>
     ${p.helpers.length ? `<span class="hero-helpers" title="Helping: ${esc(p.helpers.join(', '))}">🤝 ${p.helpers.length}</span>` : ''}
     <span class="hero-author">${esc((p.profiles?.name ?? '').split(' ')[0])}</span>
