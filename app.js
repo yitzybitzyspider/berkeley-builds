@@ -11,7 +11,7 @@ const app = document.getElementById('app');
 const state = {
   session: null,
   posts: [],
-  sort: 'new',          // 'new' | 'top'
+  sort: 'top',          // 'top' (most helpful) | 'new'
   tag: null,            // null = all
   collabOnly: false,
   problemsOnly: false,
@@ -23,6 +23,7 @@ const state = {
   events: [],           // upcoming meetings
   view: 'feed',         // 'feed' | 'resources'
   deepLinkDone: false,
+  awards: { topBuild: null, mostWanted: null, topCreator: null },
   loginError: null,
 };
 
@@ -79,6 +80,26 @@ function downloadText(filename, content) {
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+function score(p) {
+  const wants = (p.reactions ?? []).filter(r => r.type === 'want').length;
+  const helps = (p.helpers ?? []).length;
+  return (p.votes?.length ?? 0) + wants + 2 * helps + (p.comments?.length ?? 0);
+}
+
+function computeAwards() {
+  const scored = state.posts.map(p => ({ p, s: score(p) }));
+  const builds = scored.filter(x => x.p.kind !== 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
+  const probs = scored.filter(x => x.p.kind === 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
+  const byAuthor = {};
+  scored.forEach(x => { byAuthor[x.p.author] = (byAuthor[x.p.author] ?? 0) + x.s; });
+  const top = Object.entries(byAuthor).sort((a, b) => b[1] - a[1])[0];
+  state.awards = {
+    topBuild: builds[0]?.p.id ?? null,
+    mostWanted: probs[0]?.p.id ?? null,
+    topCreator: top && top[1] > 0 ? top[0] : null,
+  };
 }
 
 function postSlug(p) {
@@ -141,6 +162,7 @@ async function loadFeed() {
     p.reactions = reactions.filter(r => r.post_id === p.id);
     p.helpers = p.reactions.filter(r => r.type === 'help').map(r => helperNames[r.user_id] ?? 'Someone');
   });
+  computeAwards();
   render();
   handleDeepLink();
 }
@@ -354,7 +376,7 @@ function visiblePosts() {
   if (state.collabOnly) posts = posts.filter(p => p.looking_for_collab);
   if (state.problemsOnly) posts = posts.filter(p => p.kind === 'problem');
   if (state.sort === 'top') {
-    posts.sort((a, b) => b.votes.length - a.votes.length || new Date(b.created_at) - new Date(a.created_at));
+    posts.sort((a, b) => score(b) - score(a) || new Date(b.created_at) - new Date(a.created_at));
   }
   return posts;
 }
@@ -388,10 +410,12 @@ function postCard(p) {
         ${p.kind === 'problem' ? `<span class="problem-badge">🙋 Problem to solve</span>` : ''}
         ${p.kind === 'wip' ? `<span class="wip-badge">🔨 In the works</span>` : ''}
         ${p.remix_source ? `<span class="remix-badge" title="Built on top of another post">🔁 remix of “${esc(p.remix_source.title)}”</span>` : ''}
+        ${state.awards.topBuild === p.id ? `<span class="award-badge" title="Highest votes, wants, helpers, and comments right now">🏆 Top build</span>` : ''}
+        ${state.awards.mostWanted === p.id ? `<span class="award-badge" title="The problem classmates most want solved">🔥 Most wanted</span>` : ''}
         ${p.looking_for_collab ? `<span class="collab-badge">🤝 Looking for collaborators${p.contact ? ` · ${esc(p.contact)}` : ''}</span>` : ''}
         <span class="meta-author">
           ${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ''}
-          ${esc(author.name ?? 'Someone')}
+          ${state.awards.topCreator === p.author ? `<span title="Top creator on the board right now">👑</span> ` : ''}${esc(author.name ?? 'Someone')}
         </span>
         <span>·</span><span>${timeAgo(p.created_at)}</span>
         <span>·</span>
@@ -492,8 +516,8 @@ function feedView() {
       </div>`}
       <div class="controls">
         <div class="sort-tabs">
+          <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Most helpful</button>
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
-          <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Top</button>
         </div>
         ${state.view === 'feed' ? `
         ${TAGS.map(t => `<button class="chip ${state.tag === t ? 'active' : ''}" data-tag="${esc(t)}">${esc(t)}</button>`).join('')}

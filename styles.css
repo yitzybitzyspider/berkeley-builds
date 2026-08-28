@@ -345,3 +345,9 @@ footer { text-align: center; color: var(--muted); font-size: .75rem; padding: 2r
 @keyframes flashfade { 0% { box-shadow: 0 0 0 3px var(--gold); } 100% { box-shadow: 0 0 0 3px transparent; } }
 .card.flash { animation: flashfade 2.5s ease-out 1; }
 @media (max-width: 560px) { .views { margin-left: .2rem; } .views button { padding: .3rem .5rem; font-size: .75rem; } }
+
+/* ---------- awards (v0.8) ---------- */
+.award-badge {
+  background: linear-gradient(135deg, #fff3d6, #ffe49a); border: 1px solid var(--gold);
+  color: var(--blue-dark); border-radius: 999px; padding: .15rem .6rem; font-weight: 800;
+}
