@@ -26,7 +26,9 @@ const state = {
   pendingFiles: [],     // files staged in the share modal
   remixOf: null,        // post being remixed, while the share modal is open
   events: [],           // upcoming meetings
-  view: 'feed',         // 'feed' | 'resources' | 'board' | 'me'
+  view: 'wall',         // 'wall' | 'feed' | 'resources' | 'board' | 'me'
+  wallIdeas: [],        // public projection for signed-out visitors
+  wallTag: null,
   myEvents: [],
   deepLinkDone: false,
   awards: { topBuild: null, mostWanted: null, topCreator: null, topHelper: null },
@@ -135,6 +137,150 @@ function nameBadges(id) {
     + (state.awards.topHelper === id ? '<span title="Most helpful person right now: the most 🤝 joins given">⭐ </span>' : '');
 }
 
+const NOTE_COLORS = ['note-yellow', 'note-pink', 'note-blue', 'note-green', 'note-orange', 'note-purple'];
+const KIND_EMOJI = { problem: '🙋', wip: '🔨', find: '🔎', resource: '📚', original: '💡' };
+
+function currentWallIdeas() {
+  if (state.session) {
+    const me = state.session.user.id;
+    return state.posts.map(p => ({
+      id: p.id, title: p.title, tagline: p.tagline, tag: p.tag, kind: p.kind,
+      hearts: p.votes.length, mine: p.votes.some(v => v.user_id === me),
+    }));
+  }
+  return state.wallIdeas.map(w => ({ ...w, mine: false }));
+}
+
+function wallHtml() {
+  let ideas = currentWallIdeas();
+  const tags = [...new Set(ideas.map(i => i.tag).filter(Boolean))];
+  if (state.wallTag) ideas = ideas.filter(i => i.tag === state.wallTag);
+  ideas.sort((a, b) => b.hearts - a.hearts || (a.title < b.title ? -1 : 1));
+  const maxH = Math.max(1, ...ideas.map(i => i.hearts));
+  return `
+  <div class="wall-bar">
+    <button class="btn-primary" id="wall-add">✏️ Drop an idea</button>
+    <div class="wall-filters">
+      <button class="chip ${!state.wallTag ? 'active' : ''}" data-walltag="">All</button>
+      ${tags.map(t => `<button class="chip ${state.wallTag === t ? 'active' : ''}" data-walltag="${esc(t)}">${esc(t)}</button>`).join('')}
+    </div>
+  </div>
+  ${ideas.length ? `<div id="wall">
+    ${ideas.map((idea, i) => {
+      const s = 0.85 + 1.15 * (idea.hearts / maxH);
+      const rx = Math.round((Math.random() - 0.5) * 700);
+      const ry = Math.round(Math.random() * 480);
+      const rr = Math.round((Math.random() - 0.5) * 50);
+      return `<button class="note ${NOTE_COLORS[i % NOTE_COLORS.length]}" data-note="${idea.id}"
+        style="--s:${s.toFixed(2)}; transform: translate(${rx}px, ${ry}px) rotate(${rr}deg); opacity: 0;">
+        <span class="note-inner" style="animation-delay: -${i % 7}s; animation-duration: ${6 + (i % 5)}s">
+          <span class="note-kind">${KIND_EMOJI[idea.kind] ?? '💡'}</span>
+          <span class="note-title">${esc(idea.title)}</span>
+          <span class="note-meta">${idea.mine ? '❤️' : '🤍'} ${idea.hearts}${idea.tag ? ` · ${esc(idea.tag)}` : ''}</span>
+        </span>
+      </button>`;
+    }).join('')}
+  </div>` : `<div class="empty">No ideas yet${state.wallTag ? ' for this tag' : ''}. Be the first to slap one on the wall.</div>`}`;
+}
+
+function layoutWall() {
+  const wall = document.getElementById('wall');
+  if (!wall) return;
+  const W = wall.clientWidth;
+  const cx = W / 2;
+  const placed = [];
+  let maxY = 0;
+  [...wall.querySelectorAll('.note')].forEach((el, i) => {
+    const w = el.offsetWidth, h = el.offsetHeight;
+    let x = cx - w / 2, y = 30, r = 0, angle = i * 0.9, tries = 0;
+    const collides = () => placed.some(p =>
+      x < p.x + p.w + 10 && x + w + 10 > p.x && y < p.y + p.h + 10 && y + h + 10 > p.y);
+    while (collides() && tries < 3000) {
+      r += 3; angle += 0.3;
+      x = cx - w / 2 + r * Math.cos(angle) * 1.7;
+      y = 30 + Math.abs(r * Math.sin(angle));
+      x = Math.max(0, Math.min(Math.max(0, W - w), x));
+      tries += 1;
+    }
+    placed.push({ x, y, w, h });
+    maxY = Math.max(maxY, y + h);
+    const rot = (Math.sin(i * 7.3) * 3.5).toFixed(1);
+    setTimeout(() => {
+      el.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
+      el.style.opacity = 1;
+    }, 80 + 55 * i);
+  });
+  wall.style.height = `${maxY + 60}px`;
+}
+
+function openNote(id) {
+  if (state.session) {
+    const post = state.posts.find(p => p.id === id);
+    if (!post) return;
+    state.view = post.kind === 'resource' ? 'resources' : 'feed';
+    render();
+    if ((post.post_files ?? []).length) openContentModal(post);
+    const card = app.querySelector(`.card[data-id="${post.id}"]`);
+    if (card) { card.scrollIntoView({ block: 'center' }); card.classList.add('flash'); }
+    return;
+  }
+  const idea = state.wallIdeas.find(w => w.id === id);
+  if (!idea) return;
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `
+    <div class="modal-overlay" id="overlay">
+      <div class="modal">
+        <h2>${esc(idea.title)}</h2>
+        ${idea.tagline ? `<p class="card-tagline" style="margin: .2rem 0 .6rem">${esc(idea.tagline)}</p>` : ''}
+        <div class="card-meta" style="margin-bottom: 1rem">
+          ${idea.tag ? `<span class="tag-pill">${esc(idea.tag)}</span>` : ''}
+          <span>❤️ ${idea.hearts}</span>
+        </div>
+        <p class="hint" style="margin-bottom: 1rem">Sign in with your @berkeley.edu account to heart this, see the full build and its files, and drop your own ideas on the wall.</p>
+        <div class="modal-actions">
+          <button class="btn-secondary" id="note-close">Close</button>
+          <button class="btn-primary" id="note-signin">Sign in with Google</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('overlay').onclick = e => { if (e.target.id === 'overlay') root.innerHTML = ''; };
+  document.getElementById('note-close').onclick = () => { root.innerHTML = ''; };
+  document.getElementById('note-signin').onclick = signIn;
+}
+
+function wireWall() {
+  document.getElementById('wall-add')?.addEventListener('click', () => {
+    if (state.session) openPostModal();
+    else signIn();
+  });
+  app.querySelectorAll('[data-walltag]').forEach(b => b.onclick = () => {
+    state.wallTag = b.dataset.walltag || null;
+    render();
+  });
+  app.querySelectorAll('[data-note]').forEach(b => b.onclick = () => openNote(b.dataset.note));
+  requestAnimationFrame(() => setTimeout(layoutWall, 40));
+}
+
+function anonView() {
+  app.innerHTML = `
+    <header>
+      <div class="header-inner">
+        <span class="logo">Haas <span class="gold">Builds</span> 🐻</span>
+        <div class="header-spacer"></div>
+        <button class="share-btn" id="login-btn">Sign in with Google</button>
+      </div>
+    </header>
+    <main>
+      ${state.loginError ? `<div class="login-error" style="margin-bottom: .8rem">${esc(state.loginError)}</div>` : ''}
+      <div class="wall-intro">💡 The idea wall: what Haas is building with AI. Hearts grow the notes. Sign in with @berkeley.edu to add yours.</div>
+      ${wallHtml()}
+      <footer>Haas Builds v${APP_VERSION} · built by Haas students, for Haas students</footer>
+    </main>
+    <div id="modal-root"></div>`;
+  document.getElementById('login-btn').onclick = signIn;
+  wireWall();
+}
+
 function profileHtml() {
   const me = state.session.user.id;
   const meta = state.session.user.user_metadata ?? {};
@@ -210,6 +356,11 @@ function handleDeepLink() {
   if (state.deepLinkDone) return;
   const m = location.hash.match(/^#p=(?:.*-)?([0-9a-f]{8})$/);
   if (!m) return;
+  if (!state.session) {
+    const idea = state.wallIdeas.find(w => w.id.startsWith(m[1]));
+    if (idea) { state.deepLinkDone = true; openNote(idea.id); }
+    return;
+  }
   const post = state.posts.find(p => p.id.startsWith(m[1]));
   if (!post) return;
   state.deepLinkDone = true;
@@ -333,6 +484,12 @@ function gcalUrl(ev) {
   });
   if (ev.location) p.set('location', ev.location);
   return 'https://calendar.google.com/calendar/render?' + p.toString();
+}
+
+async function loadWall() {
+  const { data, error } = await supabase.from('idea_wall').select('*');
+  if (error) { console.error('loadWall', error); return; }
+  state.wallIdeas = data ?? [];
 }
 
 async function loadComments(postId) {
@@ -466,6 +623,14 @@ async function deleteComment(id, postId) {
 
 /* ---------------- views ---------------- */
 
+function signIn() {
+  try { if (location.hash.startsWith('#p=')) localStorage.setItem('bb-deeplink', location.hash); } catch (e) {}
+  supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: location.origin + location.pathname },
+  });
+}
+
 function loginView() {
   app.innerHTML = `
     <div class="login-wrap">
@@ -481,13 +646,7 @@ function loginView() {
         ${state.loginError ? `<div class="login-error">${esc(state.loginError)}</div>` : ''}
       </div>
     </div>`;
-  document.getElementById('login-btn').onclick = () => {
-    try { if (location.hash.startsWith('#p=')) localStorage.setItem('bb-deeplink', location.hash); } catch (e) {}
-    supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: location.origin + location.pathname },
-    });
-  };
+  document.getElementById('login-btn').onclick = signIn;
 }
 
 function visiblePosts() {
@@ -607,6 +766,7 @@ function feedView() {
       <div class="header-inner">
         <span class="logo">Haas <span class="gold">Builds</span> 🐻</span>
         <nav class="views">
+          <button class="${state.view === 'wall' ? 'active' : ''}" data-view="wall">💡 Wall</button>
           <button class="${state.view === 'feed' ? 'active' : ''}" data-view="feed">Builds</button>
           <button class="${state.view === 'resources' ? 'active' : ''}" data-view="resources">📚 Resources</button>
           <button class="${state.view === 'board' ? 'active' : ''}" data-view="board">🏅 Board</button>
@@ -635,11 +795,11 @@ function feedView() {
           </span>
         </div>`;
       })()}
-      <div class="hero">
+      ${state.view === 'wall' ? '' : `<div class="hero">
         ${heroPanel('problem', '🙋 Problems worth solving', 'What do you wish someone would build? One line, no commitment.', 'I wish someone would solve…')}
         ${heroPanel('wip', '🔨 In the works', 'Working on something? Claim it here so nobody builds it twice.', 'I’m working on…')}
-      </div>`}
-      ${(state.view === 'board' || state.view === 'me') ? '' : `<div class="controls">
+      </div>`}`}
+      ${(state.view === 'board' || state.view === 'me' || state.view === 'wall') ? '' : `<div class="controls">
         <div class="sort-tabs">
           <button data-sort="top" class="${state.sort === 'top' ? 'active' : ''}">Most helpful</button>
           <button data-sort="new" class="${state.sort === 'new' ? 'active' : ''}">Newest</button>
@@ -650,7 +810,7 @@ function feedView() {
         <button class="chip ${state.problemsOnly ? 'active' : ''}" id="problem-filter">🙋 Problems</button>` : ''}
       </div>`}
       <div id="feed">
-        ${state.view === 'me' ? profileHtml() : state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
+        ${state.view === 'wall' ? wallHtml() : state.view === 'me' ? profileHtml() : state.view === 'board' ? boardHtml() : posts.length ? posts.map(postCard).join('')
           : `<div class="empty">${state.view === 'resources' ? 'The shelf is empty. Post something with the type “Resource” and it lands here.' : `Nothing here yet${state.tag || state.collabOnly ? ' for this filter' : ''}. Be the first to share what you’re building.`}</div>`}
       </div>
       <footer>Haas Builds v${APP_VERSION} · built by Haas students, for Haas students · <a href="share-kit.md" target="_blank" rel="noopener">Share Kit</a></footer>
@@ -660,6 +820,7 @@ function feedView() {
   document.getElementById('new-post-btn').onclick = () =>
     openPostModal(null, state.view === 'resources' ? { kind: 'resource' } : null);
   app.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { state.view = b.dataset.view; render(); });
+  if (state.view === 'wall') wireWall();
   const hostBtn = document.getElementById('host-meeting');
   if (hostBtn) hostBtn.onclick = openMeetingModal;
   app.querySelectorAll('[data-del-event]').forEach(b => b.onclick = () => deleteEvent(b.dataset.delEvent));
@@ -1209,7 +1370,7 @@ async function openEditModal(post) {
 }
 
 function render() {
-  if (!state.session) loginView();
+  if (!state.session) anonView();
   else feedView();
 }
 
@@ -1228,12 +1389,17 @@ supabase.auth.onAuthStateChange((_event, session) => {
     } catch (e) {}
     loadFeed();
   }
-  else if (!session && hadSession) render();
+  else if (!session && hadSession) { loadWall().then(render); }
   // Token refreshes and tab-refocus events change nothing visible: leave the
   // DOM alone so open modals and half-typed forms survive.
 });
 
 const { data: { session } } = await supabase.auth.getSession();
 state.session = session;
-if (session) await loadFeed();
-else render();
+if (session) {
+  await loadFeed();
+} else {
+  await loadWall();
+  render();
+  handleDeepLink();
+}
