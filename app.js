@@ -6,7 +6,7 @@ if (/\.(github\.io|pages\.dev|workers\.dev)$/.test(location.hostname)) {
 import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
 import { marked } from 'https://cdn.jsdelivr.net/npm/marked@12/+esm';
 import DOMPurify from 'https://cdn.jsdelivr.net/npm/dompurify@3/+esm';
-import { SUPABASE_URL, SUPABASE_KEY, APP_VERSION } from './config.js';
+import { SUPABASE_URL, SUPABASE_KEY, APP_VERSION, FOUNDER_ID } from './config.js';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const TAGS = ['Class Tool', 'Career/Recruiting', 'Prompt or GPT', 'Startup Idea', 'Design/Creative', 'Just for Fun'];
@@ -100,14 +100,15 @@ function score(p) {
 
 function computeAwards() {
   const scored = state.posts.map(p => ({ p, s: score(p) }));
-  const builds = scored.filter(x => x.p.kind !== 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
-  const probs = scored.filter(x => x.p.kind === 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
+  const eligible = scored.filter(x => x.p.author !== FOUNDER_ID);
+  const builds = eligible.filter(x => x.p.kind !== 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
+  const probs = eligible.filter(x => x.p.kind === 'problem' && x.s > 0).sort((a, b) => b.s - a.s);
   const byAuthor = {};
-  scored.forEach(x => { byAuthor[x.p.author] = (byAuthor[x.p.author] ?? 0) + x.s; });
+  eligible.forEach(x => { byAuthor[x.p.author] = (byAuthor[x.p.author] ?? 0) + x.s; });
   const top = Object.entries(byAuthor).sort((a, b) => b[1] - a[1])[0];
   const helpsBy = {};
   state.posts.forEach(p => (p.helperIds ?? []).forEach(id => { helpsBy[id] = (helpsBy[id] ?? 0) + 1; }));
-  const topH = Object.entries(helpsBy).sort((a, b) => b[1] - a[1])[0];
+  const topH = Object.entries(helpsBy).filter(([id]) => id !== FOUNDER_ID).sort((a, b) => b[1] - a[1])[0];
   state.awards = {
     topBuild: builds[0]?.p.id ?? null,
     mostWanted: probs[0]?.p.id ?? null,
@@ -328,11 +329,12 @@ function profileHtml() {
 }
 
 function boardHtml() {
-  if (!state.board.length) return `<div class="empty">Nobody on the board yet. Post, help, react: it all counts.</div>`;
+  const rows = state.board.filter(r => r.id !== FOUNDER_ID);
+  if (!rows.length) return `<div class="empty">Nobody on the board yet. Post, help, react: it all counts.</div>`;
   return `<div class="board-wrap"><table class="board">
     <thead><tr><th></th><th>Who</th><th title="Builds and finds posted">🔨 Builds</th><th title="Resources shared">📚 Resources</th><th title="Problems raised">🙋 Problems</th><th title="Times they joined to help someone">🤝 Helps</th><th title="Votes, wants, helpers, and comments earned by their posts">Engagement</th><th title="Engagement + 2x helps + posts">Impact</th></tr></thead>
     <tbody>
-      ${state.board.map((r, i) => `<tr>
+      ${rows.map((r, i) => `<tr>
         <td class="board-rank">${['🥇', '🥈', '🥉'][i] ?? i + 1}</td>
         <td class="board-name">${nameBadges(r.id)}${esc(r.name)}</td>
         <td>${r.builds || ''}</td><td>${r.resources || ''}</td><td>${r.problems || ''}</td>
@@ -340,7 +342,7 @@ function boardHtml() {
       </tr>`).join('')}
     </tbody>
   </table>
-  <div class="hint" style="margin-top:.5rem">⭐ goes to the most helpful person (most 🤝 joins given). 👑 goes to the top creator. Both are live titles: they move.</div></div>`;
+  <div class="hint" style="margin-top:.5rem">⭐ goes to the most helpful person (most 🤝 joins given). 👑 goes to the top creator. Both are live titles: they move. The founder plays for zero points and holds no titles.</div></div>`;
 }
 
 function postSlug(p) {
